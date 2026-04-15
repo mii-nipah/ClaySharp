@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="ClaySharp.Raylib/ClaySharp.Raylib.csproj" />
   <Project Path="ClaySharp.Run/ClaySharp.Run.csproj" />
   <Project Path="ClaySharp.Tests/ClaySharp.Tests.csproj" />
   <Project Path="ClaySharp/ClaySharp.csproj" />
