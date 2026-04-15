@@ -147,6 +147,39 @@ public sealed class LayoutEngineTests
         Assert.True(hasScissorEnd);
     }
 
+    [Fact]
+    public void ClipContainers_AllowMainAxisOverflowWithoutShrinkingChildren()
+    {
+        using var context = new ClayContext();
+        var measurer = new MonospaceTextMeasurer();
+
+        context.BeginLayout(new Vector2(300f, 200f), measurer);
+        using (context.Element(new ElementStyle(
+            50,
+            new LayoutConfig(axis: LayoutAxis.Vertical, sizing: ElementSizing.Fixed(100f, 60f), clipContent: true),
+            new BoxStyle(new ClayColor(210, 210, 210)))))
+        {
+            context.Custom(new CustomElementStyle(
+                new ElementStyle(51, new LayoutConfig(sizing: new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit()))),
+                new Vector2(100f, 40f),
+                null));
+            context.Custom(new CustomElementStyle(
+                new ElementStyle(52, new LayoutConfig(sizing: new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit()))),
+                new Vector2(100f, 40f),
+                null));
+        }
+
+        context.EndLayout();
+
+        Assert.True(context.TryGetBounds(50, out var parentBounds));
+        Assert.True(context.TryGetBounds(51, out var firstBounds));
+        Assert.True(context.TryGetBounds(52, out var secondBounds));
+        Assert.Equal(60f, parentBounds.Height, 2);
+        Assert.Equal(40f, firstBounds.Height, 2);
+        Assert.Equal(40f, secondBounds.Height, 2);
+        Assert.Equal(40f, secondBounds.Y - firstBounds.Y, 2);
+    }
+
     private sealed class MonospaceTextMeasurer : ITextMeasurer
     {
         public float MeasureWidth(ReadOnlySpan<char> text, in TextStyle style) => text.Length * 10f;

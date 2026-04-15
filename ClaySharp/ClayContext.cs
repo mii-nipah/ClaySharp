@@ -316,7 +316,7 @@ public sealed class ClayContext : IDisposable
                     DistributeGrowth(flowChildren.Slice(0, growCount), remaining, isWidth: true);
                 }
             }
-            else if (remaining < -Epsilon)
+            else if (remaining < -Epsilon && !parent.Style.Layout.ClipContent)
             {
                 var shrinkCount = CompactChildren(flowChildren, (node, isWidth) => GetSizeSpec(node, isWidth).Mode != SizeMode.Fixed, isWidth: true);
                 if (shrinkCount > 0)
@@ -366,7 +366,7 @@ public sealed class ClayContext : IDisposable
                     DistributeGrowth(flowChildren.Slice(0, growCount), remaining, isWidth: false);
                 }
             }
-            else if (remaining < -Epsilon)
+            else if (remaining < -Epsilon && !parent.Style.Layout.ClipContent)
             {
                 var shrinkCount = CompactChildren(flowChildren, (node, isWidth) => GetSizeSpec(node, isWidth).Mode != SizeMode.Fixed, isWidth: false);
                 if (shrinkCount > 0)

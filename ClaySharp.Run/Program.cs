@@ -7,10 +7,20 @@ const ulong IncrementButtonId = 1;
 const ulong ToggleOverlayButtonId = 2;
 const ulong ScrollPanelId = 3;
 const ulong ToastId = 4;
+const int DefaultWindowWidth = 1280;
+const int DefaultWindowHeight = 800;
+const float DefaultMaxScroll = 520f;
+const string DefaultSnapshotPath = "ClaySharp.Run.snapshot.png";
 
-Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
-Raylib.InitWindow(1280, 800, "ClaySharp.Run");
-Raylib.SetTargetFPS(60);
+var snapshotPath = ParseSnapshotPath(args);
+var snapshotMode = snapshotPath is not null;
+
+Raylib.SetConfigFlags(snapshotMode ? ConfigFlags.HiddenWindow : ConfigFlags.ResizableWindow);
+Raylib.InitWindow(DefaultWindowWidth, DefaultWindowHeight, "ClaySharp.Run");
+if (!snapshotMode)
+{
+    Raylib.SetTargetFPS(60);
+}
 
 var fontPath = Path.Combine(AppContext.BaseDirectory, "OpenSans-Regular.ttf");
 var useLoadedFont = File.Exists(fontPath);
@@ -21,35 +31,64 @@ using var context = new ClayContext(initialElementCapacity: 512, initialLeafCapa
 using var measurer = new RaylibTextMeasurer(_ => font);
 using var renderer = new ClayRaylibRenderer(_ => font);
 
-var counter = 0;
-var toastVisible = false;
-var scrollOffset = 0f;
-var maxScroll = 520f;
+var state = new DemoState(DefaultMaxScroll);
 
-while (!Raylib.WindowShouldClose())
+if (snapshotMode)
 {
-    var mouse = Raylib.GetMousePosition();
-    var hoveredId = context.TryHitTest(mouse, out var hitId) ? hitId : 0UL;
+    var viewport = new Vector2(DefaultWindowWidth, DefaultWindowHeight);
+    BuildUi(context, measurer, viewport, state, hoveredId: 0UL);
+    var exportedPath = ExportSnapshot(renderer, context.RenderCommands, snapshotPath!, DefaultWindowWidth, DefaultWindowHeight);
+    Console.WriteLine($"Snapshot exported to {exportedPath}");
+}
+else
+{
+    RunInteractiveLoop(context, measurer, renderer, state);
+}
 
-    if (context.TryGetBounds(ScrollPanelId, out var scrollBounds) && scrollBounds.Contains(mouse))
-    {
-        scrollOffset = Math.Clamp(scrollOffset - (Raylib.GetMouseWheelMove() * 36f), 0f, maxScroll);
-    }
+if (useLoadedFont)
+{
+    Raylib.UnloadFont(font);
+}
 
-    if (Raylib.IsMouseButtonPressed(MouseButton.Left))
+Raylib.CloseWindow();
+
+static void RunInteractiveLoop(ClayContext context, ITextMeasurer measurer, ClayRaylibRenderer renderer, DemoState state)
+{
+    while (!Raylib.WindowShouldClose())
     {
-        if (hoveredId == IncrementButtonId)
+        var mouse = Raylib.GetMousePosition();
+        var hoveredId = context.TryHitTest(mouse, out var hitId) ? hitId : 0UL;
+
+        if (context.TryGetBounds(ScrollPanelId, out var scrollBounds) && scrollBounds.Contains(mouse))
         {
-            counter++;
+            state.ScrollOffset = Math.Clamp(state.ScrollOffset - (Raylib.GetMouseWheelMove() * 36f), 0f, state.MaxScroll);
         }
 
-        if (hoveredId == ToggleOverlayButtonId)
+        if (Raylib.IsMouseButtonPressed(MouseButton.Left))
         {
-            toastVisible = !toastVisible;
-        }
-    }
+            if (hoveredId == IncrementButtonId)
+            {
+                state.Counter++;
+            }
 
-    var viewport = new Vector2(Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
+            if (hoveredId == ToggleOverlayButtonId)
+            {
+                state.ToastVisible = !state.ToastVisible;
+            }
+        }
+
+        var viewport = new Vector2(Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
+        BuildUi(context, measurer, viewport, state, hoveredId);
+
+        Raylib.BeginDrawing();
+        Raylib.ClearBackground(GetCanvasBackground());
+        renderer.Render(context.RenderCommands);
+        Raylib.EndDrawing();
+    }
+}
+
+static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewport, DemoState state, ulong hoveredId)
+{
     context.BeginLayout(viewport, measurer);
 
     using (context.Element(new ElementStyle(
@@ -88,7 +127,7 @@ while (!Raylib.WindowShouldClose())
             using (context.Element(ButtonStyle(ToggleOverlayButtonId, hoveredId == ToggleOverlayButtonId, new ClayColor(60, 89, 84), new ClayColor(242, 245, 240), new Vector2(188f, 54f))))
             {
                 context.Text(
-                    toastVisible ? "Hide Overlay" : "Show Overlay",
+                    state.ToastVisible ? "Hide Overlay" : "Show Overlay",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Grow(), padding: new Thickness(16f, 14f, 16f, 14f))),
                         new TextStyle(18f, new ClayColor(242, 245, 240), horizontalAlignment: Alignment.Center, wrap: false)));
@@ -109,8 +148,8 @@ while (!Raylib.WindowShouldClose())
             {
                 using (context.Element(new ElementStyle(layout: new LayoutConfig(axis: LayoutAxis.Horizontal, sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()), gap: 12f))))
                 {
-                    SummaryCard(context, "Counter", counter.ToString(), new ClayColor(115, 145, 121));
-                    SummaryCard(context, "Scroll", $"{scrollOffset:0}px", new ClayColor(183, 123, 89));
+                    SummaryCard(context, "Counter", state.Counter.ToString(), new ClayColor(115, 145, 121));
+                    SummaryCard(context, "Scroll", $"{state.ScrollOffset:0}px", new ClayColor(183, 123, 89));
                     SummaryCard(context, "Nodes", context.ElementCount.ToString(), new ClayColor(89, 112, 144));
                 }
 
@@ -140,7 +179,7 @@ while (!Raylib.WindowShouldClose())
                         padding: new Thickness(18f),
                         gap: 12f,
                         clipContent: true,
-                        scrollOffset: new Vector2(0f, scrollOffset)),
+                        scrollOffset: new Vector2(0f, state.ScrollOffset)),
                     box: new BoxStyle(new ClayColor(247, 242, 234), new BorderStyle(new Thickness(1f), new ClayColor(224, 212, 194)), new CornerRadius(18f)))))
                 {
                     for (var index = 0; index < 14; index++)
@@ -155,7 +194,7 @@ while (!Raylib.WindowShouldClose())
                                 index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224),
                                 new BorderStyle(new Thickness(1f), new ClayColor(220, 208, 190)),
                                 new CornerRadius(14f),
-                                index == counter % 14 ? new ClayColor(255, 255, 255, 22) : ClayColor.Transparent))))
+                                index == state.Counter % 14 ? new ClayColor(255, 255, 255, 22) : ClayColor.Transparent))))
                         {
                             context.Text(
                                 $"Panel {index + 1}",
@@ -198,7 +237,7 @@ while (!Raylib.WindowShouldClose())
             }
         }
 
-        if (toastVisible)
+        if (state.ToastVisible)
         {
             using (context.Element(new ElementStyle(
                 id: ToastId,
@@ -225,18 +264,87 @@ while (!Raylib.WindowShouldClose())
         }
     }
 
-    Raylib.BeginDrawing();
-    Raylib.ClearBackground(new Color(236, 229, 220, 255));
-    renderer.Render(context.RenderCommands);
-    Raylib.EndDrawing();
+    context.EndLayout();
 }
 
-if (useLoadedFont)
+static string ExportSnapshot(ClayRaylibRenderer renderer, ReadOnlySpan<RenderCommand> commands, string outputPath, int width, int height)
 {
-    Raylib.UnloadFont(font);
+    var resolvedPath = Path.GetFullPath(string.IsNullOrWhiteSpace(outputPath) ? DefaultSnapshotPath : outputPath);
+    var directory = Path.GetDirectoryName(resolvedPath);
+    if (!string.IsNullOrEmpty(directory))
+    {
+        Directory.CreateDirectory(directory);
+    }
+
+    var target = Raylib.LoadRenderTexture(width, height);
+    try
+    {
+        Raylib.BeginTextureMode(target);
+        try
+        {
+            Raylib.ClearBackground(GetCanvasBackground());
+            renderer.Render(commands);
+        }
+        finally
+        {
+            Raylib.EndTextureMode();
+        }
+
+        var image = Raylib.LoadImageFromTexture(target.Texture);
+        try
+        {
+            Raylib.ImageFlipVertical(ref image);
+            if (!Raylib.ExportImage(image, resolvedPath))
+            {
+                throw new IOException($"Failed to export snapshot to '{resolvedPath}'.");
+            }
+        }
+        finally
+        {
+            Raylib.UnloadImage(image);
+        }
+    }
+    finally
+    {
+        Raylib.UnloadRenderTexture(target);
+    }
+
+    return resolvedPath;
 }
 
-Raylib.CloseWindow();
+static string? ParseSnapshotPath(string[] args)
+{
+    string? snapshotPath = null;
+
+    for (var index = 0; index < args.Length; index++)
+    {
+        var argument = args[index];
+        if (argument.StartsWith("--snapshot=", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = argument["--snapshot=".Length..].Trim();
+            snapshotPath = string.IsNullOrWhiteSpace(value) ? DefaultSnapshotPath : value;
+            continue;
+        }
+
+        if (!argument.Equals("--snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            snapshotPath = args[++index];
+        }
+        else
+        {
+            snapshotPath = DefaultSnapshotPath;
+        }
+    }
+
+    return snapshotPath;
+}
+
+static Color GetCanvasBackground() => new(236, 229, 220, 255);
 
 static ElementStyle ButtonStyle(ulong id, bool hovered, ClayColor background, ClayColor foreground, Vector2 size)
 {
@@ -244,7 +352,7 @@ static ElementStyle ButtonStyle(ulong id, bool hovered, ClayColor background, Cl
     return new ElementStyle(
         id,
         new LayoutConfig(axis: LayoutAxis.Vertical, sizing: ElementSizing.Fixed(size.X, size.Y)),
-    new BoxStyle(background, new BorderStyle(new Thickness(1f), foreground), new CornerRadius(16f), overlay));
+        new BoxStyle(background, new BorderStyle(new Thickness(1f), foreground), new CornerRadius(16f), overlay));
 }
 
 static void SummaryCard(ClayContext context, string title, string value, ClayColor accent)
@@ -268,4 +376,20 @@ static void SummaryCard(ClayContext context, string title, string value, ClayCol
                 ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                 new TextStyle(26f, new ClayColor(38, 33, 28), wrap: false)));
     }
+}
+
+sealed class DemoState
+{
+    public DemoState(float maxScroll)
+    {
+        MaxScroll = maxScroll;
+    }
+
+    public int Counter { get; set; }
+
+    public bool ToastVisible { get; set; }
+
+    public float ScrollOffset { get; set; }
+
+    public float MaxScroll { get; }
 }
