@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ClaySharp\ClaySharp.csproj" />
+    <ProjectReference Include="..\ClaySharp.Raylib\ClaySharp.Raylib.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
