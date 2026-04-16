@@ -111,10 +111,32 @@ public sealed class ClayContext : IDisposable
 
     public ElementScope Element(in ElementStyle style)
     {
+        OpenElement(style);
+        return new ElementScope(this);
+    }
+
+    public void OpenElement(in ElementStyle style)
+    {
         EnsureBuilding();
         var index = AddNode(ElementKind.Container, style, -1);
         PushOpenElement(index);
-        return new ElementScope(this);
+    }
+
+    public void CloseCurrentElement()
+    {
+        EnsureBuilding();
+        CloseElement();
+    }
+
+    public void UpdateCurrentElementStyle(in ElementStyle style)
+    {
+        EnsureBuilding();
+        if (_openElementCount <= 1)
+        {
+            throw new InvalidOperationException("There is no open element to update.");
+        }
+
+        _nodes[CurrentParentIndex].Style = style;
     }
 
     public void Box(in ElementStyle style)
