@@ -95,7 +95,7 @@ static void Game(ClayGui clui, DemoState state)
     clui.Begin();
 
     var badgePhase = 0.5f + (0.5f * MathF.Sin((float)Raylib.GetTime() * 2.2f));
-    var badgeOffsetY = state.ToastVisible ? 156f : 132f;
+    var badgeOffsetY = state.ToastVisible ? 188f : 132f;
     var badgeColor = new ClayColor(
         LerpByte(190, 236, badgePhase),
         LerpByte(132, 168, badgePhase),
@@ -320,7 +320,7 @@ static void Game(ClayGui clui, DemoState state)
         using(clui.Element()
             .Animated(0.28f)
             .Floating(20)
-            .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f))
+            .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 116f))
             .Color(new ClayColor(28, 31, 39, 245))
             .Border(new Thickness(1f), new ClayColor(122, 138, 167))
             .CornerRadius(18f)
