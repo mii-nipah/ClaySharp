@@ -3,13 +3,8 @@ using ClaySharp;
 using ClaySharp.Raylib;
 using Raylib_cs;
 
-const ulong IncrementButtonId = 1;
-const ulong ToggleOverlayButtonId = 2;
-const ulong ScrollPanelId = 3;
-const ulong ToastId = 4;
 const int DefaultWindowWidth = 1280;
 const int DefaultWindowHeight = 800;
-const float DefaultMaxScroll = 520f;
 const string DefaultSnapshotPath = "ClaySharp.Run.snapshot.png";
 
 var snapshotPath = ParseSnapshotPath(args);
@@ -32,18 +27,19 @@ if (!snapshotMode)
 
     var clui = new ClayGui(context, measurer, renderer);
 
-    var state = new DemoState(DefaultMaxScroll);
+    var state = new DemoState();
 
     if (snapshotMode)
     {
         var viewport = new Vector2(DefaultWindowWidth, DefaultWindowHeight);
-        BuildUi(context, measurer, viewport, state, hoveredId: 0UL);
-        var exportedPath = ExportSnapshot(renderer, context.RenderCommands, snapshotPath!, DefaultWindowWidth, DefaultWindowHeight);
+        clui.SetViewport(viewport);
+        Game(clui, state);
+        var exportedPath = ExportSnapshot(renderer, clui.RenderCommands, snapshotPath!, DefaultWindowWidth, DefaultWindowHeight);
         Console.WriteLine($"Snapshot exported to {exportedPath}");
     }
     else
     {
-        RunInteractiveLoop(clui, context, measurer, renderer, state);
+        RunInteractiveLoop(clui, renderer, state);
     }
 }
 
@@ -57,6 +53,14 @@ static RaylibFontAsset LoadUiFontAsset(string fontPath)
     }
 
     var codepoints = RaylibFontAsset.CreateCodepointRange(32, 255);
+    var forceRegularFont = Environment.GetEnvironmentVariable("CLAYSHARP_FORCE_REGULAR_FONT") == "1";
+
+    if (forceRegularFont)
+    {
+        var font = Raylib.LoadFontEx(fontPath, 48, codepoints, codepoints.Length);
+        Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
+        return RaylibFontAsset.Wrap(font, ownsFont: true);
+    }
 
     try
     {
@@ -71,39 +75,17 @@ static RaylibFontAsset LoadUiFontAsset(string fontPath)
     }
 }
 
-static void RunInteractiveLoop(ClayGui clui, ClayContext context, ITextMeasurer measurer, ClayRaylibRenderer renderer, DemoState state)
+static void RunInteractiveLoop(ClayGui clui, ClayRaylibRenderer renderer, DemoState state)
 {
     while (!Raylib.WindowShouldClose())
     {
-        var mouse = Raylib.GetMousePosition();
-        var hoveredId = context.TryHitTest(mouse, out var hitId) ? hitId : 0UL;
-
-        if (context.TryGetBounds(ScrollPanelId, out var scrollBounds) && scrollBounds.Contains(mouse))
-        {
-            state.ScrollOffset = Math.Clamp(state.ScrollOffset - (Raylib.GetMouseWheelMove() * 36f), 0f, state.MaxScroll);
-        }
-
-        if (Raylib.IsMouseButtonPressed(MouseButton.Left))
-        {
-            if (hoveredId == IncrementButtonId)
-            {
-                state.Counter++;
-            }
-
-            if (hoveredId == ToggleOverlayButtonId)
-            {
-                state.ToastVisible = !state.ToastVisible;
-            }
-        }
-
         var viewport = new Vector2(Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
         clui.SetViewport(viewport);
-        // BuildUi(context, measurer, viewport, state, hoveredId);
         Game(clui, state);
 
         Raylib.BeginDrawing();
         Raylib.ClearBackground(GetCanvasBackground());
-        renderer.Render(context.RenderCommands);
+        renderer.Render(clui.RenderCommands);
         Raylib.EndDrawing();
     }
 }
@@ -125,36 +107,34 @@ static void Game(ClayGui clui, DemoState state)
             .CornerRadius(18f)
             .Padding(22f)
             .Gap(16f)
-            .FitHorizontal()
-            .GrowVertical()
+            .GrowHorizontal()
+            .FitVertical()
             .HorizontalLayout()
             .CrossAlignment(Alignment.Center))
         {
             using(clui.Element()
-                .Padding(16f)
                 .Gap(6f)
-                .FitHorizontal()
-                .GrowVertical()
+                .GrowHorizontal()
+                .FitVertical()
                 .VerticalLayout())
             {
-                clui.Text("ClaySharp")
-                    .FontSize(34f)
-                    .Color(new ClayColor(32, 28, 24))
-                    .LetterSpacing(1f)
-                    .NoWrap();
+                clui.Text(
+                    "ClaySharp",
+                    new TextElementStyle(
+                        ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
+                        new TextStyle(34f, new ClayColor(32, 28, 24), letterSpacing: 1f, wrap: false)));
 
-                clui.Text("Immediate-mode layout with pooled buffers, wrapped text, clipping, and a flat render command stream.")
-                    .FontSize(18f)
-                    .Color(new ClayColor(84, 74, 62))
-                    .LineHeight(24f)
-                    .Wrap();
+                clui.Text(
+                    "Immediate-mode layout with pooled buffers, wrapped text, clipping, and a flat render command stream.",
+                    new TextElementStyle(
+                        new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
+                        new TextStyle(18f, new ClayColor(84, 74, 62), lineHeight: 24f, wrap: true)));
             }
 
             using(clui.Element()
                 .BackgroundColor(new ClayColor(60, 89, 84))
                 .Border(new Thickness(1f), new ClayColor(242, 245, 240))
                 .CornerRadius(16f)
-                .Padding(16f, 14f)
                 .Hovered(out var overlayHovered)
                 .OverlayColor(overlayHovered
                     ? new ClayColor(255, 255, 255, 28)
@@ -164,204 +144,7 @@ static void Game(ClayGui clui, DemoState state)
             {
                 if(clicked)
                     state.ToastVisible = !state.ToastVisible;
-                clui.Text(state.ToastVisible ? "Hide Overlay" : "Show Overlay")
-                    .FontSize(18f)
-                    .Color(new ClayColor(242, 245, 240))
-                    .HorizontalAlignment(Alignment.Center)
-                    .NoWrap();
-            }
-        }
-    }
-
-    using(clui.Element()
-        .Gap(18f)
-        .Grow()
-        .HorizontalLayout())
-    {
-        using(clui.Element()
-            .Color(new ClayColor(252, 249, 244))
-            .Border(new Thickness(1f), new ClayColor(205, 193, 176))
-            .CornerRadius(22f)
-            .Padding(20f)
-            .Gap(16f)
-            .Grow()
-            .VerticalLayout())
-        {
-            using(clui.Element()
-                .Gap(12f)
-                .FitHorizontal()
-                .HorizontalLayout())
-            {
-                NiceSummaryCard(clui, "Counter", state.Counter.ToString(), new ClayColor(115, 145, 121));
-                NiceSummaryCard(clui, "Scroll", $"{state.ScrollOffset:0}px", new ClayColor(183, 123, 89));
-                NiceSummaryCard(clui, "Nodes", clui.ElementCount.ToString(), new ClayColor(89, 112, 144));
-            }
-
-            using(clui.Element()
-                .Gap(14f)
-                .FitHorizontal()
-                .HorizontalLayout())
-            {
-                using(clui.Element()
-                    .BackgroundColor(new ClayColor(28, 31, 39))
-                    .Border(new Thickness(1f), new ClayColor(239, 239, 235))
-                    .CornerRadius(16f)
-                    .Padding(18f, 16f)
-                    .Hovered(out var incrementHovered)
-                    .OverlayColor(incrementHovered
-                        ? new ClayColor(255, 255, 255, 28)
-                        : ClayColor.Transparent)
-                    .Clicked(out var incrementClicked)
-                    .Size(new Vector2(220f, 60f)))
-                {
-                    if (incrementClicked)
-                        state.Counter++;
-                    clui.Text("Increment Counter")
-                        .FontSize(20f)
-                        .Color(new ClayColor(239, 239, 235))
-                        .HorizontalAlignment(Alignment.Center)
-                        .NoWrap();
-                }
-
-                clui.Text("The list below is clipped by a scissor region and offset with a user-managed scroll value.")
-                    .FontSize(17f)
-                    .Color(new ClayColor(84, 74, 62))
-                    .LineHeight(24f)
-                    .Wrap();
-            }
-
-            using(clui.Element()
-                .BackgroundColor(new ClayColor(247, 242, 234))
-                .Border(new Thickness(1f), new ClayColor(224, 212, 194))
-                .CornerRadius(18f)
-                .Padding(18f)
-                .Gap(12f)
-                .Grow()
-                .ClipContent()
-                .ScrollOffset(new Vector2(0f, state.ScrollOffset)))
-            {
-                for (var index = 0; index < 14; index++)
-                {
-                    using(clui.Element()
-                        .Color(index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224))
-                        .Border(new Thickness(1f), new ClayColor(220, 208, 190))
-                        .CornerRadius(14f)
-                        .OverlayColor(index == state.Counter % 14 ? new ClayColor(255, 255, 255, 22) : ClayColor.Transparent)
-                        .Padding(16f)
-                        .Gap(8f)
-                        .FitHorizontal()
-                        .VerticalLayout())
-                    {
-                        clui.Text($"Panel {index + 1}")
-                            .FontSize(20f)
-                            .Color(new ClayColor(38, 33, 28))
-                            .NoWrap();
-                        clui.Text("The layout engine measures width first, wraps text once widths are final, then resolves heights and positions in later passes.")
-                            .FontSize(16f)
-                            .Color(new ClayColor(96, 86, 74))
-                            .LineHeight(22f)
-                            .Wrap();
-                    }
-                }
-            }
-        }
-    }
-
-    using(clui.Element()
-        .Color(new ClayColor(44, 53, 68))
-        .Border(new Thickness(1f), new ClayColor(73, 89, 110))
-        .CornerRadius(22f)
-        .Padding(20f)
-        .Gap(14f)
-        .FitHorizontal(280f)
-        .GrowVertical()
-        .VerticalLayout())
-    {
-        clui.Text("Renderer Notes")
-            .FontSize(22f)
-            .Color(new ClayColor(244, 240, 231))
-            .NoWrap();
-        clui.Text("This demo resolves wrapped text in ClaySharp, then feeds a flat stream of rectangle, border, text, scissor, overlay, image, and custom commands into the Raylib painter.")
-            .FontSize(17f)
-            .Color(new ClayColor(205, 214, 222))
-            .LineHeight(24f)
-            .Wrap();
-        clui.Text("Interaction is derived from the previous frame's layout via hit-testing on element bounds.")
-            .FontSize(17f)
-            .Color(new ClayColor(205, 214, 222))
-            .LineHeight(24f)
-            .Wrap();
-    }
-
-    if (state.ToastVisible)
-    {
-        using(clui.Element()
-            .Color(new ClayColor(28, 31, 39, 245))
-            .Border(new Thickness(1f), new ClayColor(122, 138, 167))
-            .CornerRadius(18f)
-            .OverlayColor(new ClayColor(255, 255, 255, 18))
-            .Padding(18f)
-            .Gap(8f)
-            .FitHorizontal(320f)
-            .PositionMode(PositionMode.Absolute)
-            .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f))
-            .VerticalLayout())
-        {
-            clui.Text("Absolute Overlay")
-                .FontSize(20f)
-                .Color(new ClayColor(242, 245, 240))
-                .NoWrap();
-            clui.Text("This panel is removed from normal flow and anchored against the root container with an absolute position.")
-                .FontSize(16f)
-                .Color(new ClayColor(205, 214, 222))
-                .LineHeight(22f)
-                .Wrap();
-        }
-    }
-
-    clui.End();
-}
-
-static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewport, DemoState state, ulong hoveredId)
-{
-    context.BeginLayout(viewport, measurer);
-
-    using (context.Element(new ElementStyle(
-        layout: new LayoutConfig(
-            axis: LayoutAxis.Vertical,
-            sizing: ElementSizing.Grow(),
-            padding: new Thickness(24f),
-            gap: 18f),
-        box: new BoxStyle(new ClayColor(244, 239, 231)))))
-    {
-        using (context.Element(new ElementStyle(
-            layout: new LayoutConfig(
-                axis: LayoutAxis.Horizontal,
-                sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()),
-                padding: new Thickness(22f),
-                gap: 16f,
-                crossAlignment: Alignment.Center),
-            box: new BoxStyle(new ClayColor(252, 249, 244), new BorderStyle(new Thickness(1f), new ClayColor(205, 193, 176)), new CornerRadius(18f)))))
-        {
-            using (context.Element(new ElementStyle(
-                layout: new LayoutConfig(axis: LayoutAxis.Vertical, sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()), gap: 6f))))
-            {
-                context.Text(
-                    "ClaySharp",
-                    new TextElementStyle(
-                        ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
-                        new TextStyle(34f, new ClayColor(32, 28, 24), letterSpacing: 1f, wrap: false)));
-
-                context.Text(
-                    "Immediate-mode layout with pooled buffers, wrapped text, clipping, and a flat render command stream.",
-                    new TextElementStyle(
-                        new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
-                        new TextStyle(18f, new ClayColor(84, 74, 62), lineHeight: 24f, wrap: true)));
-            }
-
-            using (context.Element(ButtonStyle(ToggleOverlayButtonId, hoveredId == ToggleOverlayButtonId, new ClayColor(60, 89, 84), new ClayColor(242, 245, 240), new Vector2(188f, 54f))))
-            {
-                context.Text(
+                clui.Text(
                     state.ToastVisible ? "Hide Overlay" : "Show Overlay",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Grow(), padding: new Thickness(16f, 14f, 16f, 14f))),
@@ -369,74 +152,94 @@ static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewpor
             }
         }
 
-        using (context.Element(new ElementStyle(
-            layout: new LayoutConfig(axis: LayoutAxis.Horizontal, sizing: ElementSizing.Grow(), gap: 18f),
-            box: default)))
+        using(clui.Element()
+            .Gap(18f)
+            .Grow()
+            .HorizontalLayout())
         {
-            using (context.Element(new ElementStyle(
-                layout: new LayoutConfig(
-                    axis: LayoutAxis.Vertical,
-                    sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Grow()),
-                    padding: new Thickness(20f),
-                    gap: 16f),
-                box: new BoxStyle(new ClayColor(252, 249, 244), new BorderStyle(new Thickness(1f), new ClayColor(205, 193, 176)), new CornerRadius(22f)))))
+            using(clui.Element()
+                .Color(new ClayColor(252, 249, 244))
+                .Border(new Thickness(1f), new ClayColor(205, 193, 176))
+                .CornerRadius(22f)
+                .Padding(20f)
+                .Gap(16f)
+                .Grow()
+                .VerticalLayout())
             {
-                using (context.Element(new ElementStyle(layout: new LayoutConfig(axis: LayoutAxis.Horizontal, sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()), gap: 12f))))
+                using(clui.Element()
+                    .Gap(12f)
+                    .GrowHorizontal()
+                    .FitVertical()
+                    .HorizontalLayout())
                 {
-                    SummaryCard(context, "Counter", state.Counter.ToString(), new ClayColor(115, 145, 121));
-                    SummaryCard(context, "Scroll", $"{state.ScrollOffset:0}px", new ClayColor(183, 123, 89));
-                    SummaryCard(context, "Nodes", context.ElementCount.ToString(), new ClayColor(89, 112, 144));
+                    NiceSummaryCard(clui, "Counter", state.Counter.ToString(), new ClayColor(115, 145, 121));
+                    NiceSummaryCard(clui, "Scroll", $"{state.ScrollOffset:0}px", new ClayColor(183, 123, 89));
+                    NiceSummaryCard(clui, "Nodes", clui.ElementCount.ToString(), new ClayColor(89, 112, 144));
                 }
 
-                using (context.Element(new ElementStyle(layout: new LayoutConfig(axis: LayoutAxis.Horizontal, sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()), gap: 14f))))
+                using(clui.Element()
+                    .Gap(14f)
+                    .GrowHorizontal()
+                    .FitVertical()
+                    .HorizontalLayout())
                 {
-                    using (context.Element(ButtonStyle(IncrementButtonId, hoveredId == IncrementButtonId, new ClayColor(28, 31, 39), new ClayColor(239, 239, 235), new Vector2(220f, 60f))))
+                    using(clui.Element()
+                        .BackgroundColor(new ClayColor(28, 31, 39))
+                        .Border(new Thickness(1f), new ClayColor(239, 239, 235))
+                        .CornerRadius(16f)
+                        .Hovered(out var incrementHovered)
+                        .OverlayColor(incrementHovered
+                            ? new ClayColor(255, 255, 255, 28)
+                            : ClayColor.Transparent)
+                        .Clicked(out var incrementClicked)
+                        .Size(new Vector2(220f, 60f)))
                     {
-                        context.Text(
+                        if (incrementClicked)
+                            state.Counter++;
+                        clui.Text(
                             "Increment Counter",
                             new TextElementStyle(
                                 new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Grow(), padding: new Thickness(18f, 16f, 18f, 16f))),
                                 new TextStyle(20f, new ClayColor(239, 239, 235), horizontalAlignment: Alignment.Center, wrap: false)));
                     }
 
-                    context.Text(
+                    clui.Text(
                         "The list below is clipped by a scissor region and offset with a user-managed scroll value.",
                         new TextElementStyle(
                             new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                             new TextStyle(17f, new ClayColor(84, 74, 62), lineHeight: 24f, wrap: true)));
                 }
 
-                using (context.Element(new ElementStyle(
-                    id: ScrollPanelId,
-                    layout: new LayoutConfig(
-                        axis: LayoutAxis.Vertical,
-                        sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Grow()),
-                        padding: new Thickness(18f),
-                        gap: 12f,
-                        clipContent: true,
-                        scrollOffset: new Vector2(0f, state.ScrollOffset)),
-                    box: new BoxStyle(new ClayColor(247, 242, 234), new BorderStyle(new Thickness(1f), new ClayColor(224, 212, 194)), new CornerRadius(18f)))))
+                using(clui.Element()
+                    .BackgroundColor(new ClayColor(247, 242, 234))
+                    .Border(new Thickness(1f), new ClayColor(224, 212, 194))
+                    .CornerRadius(18f)
+                    .Padding(18f)
+                    .Gap(12f)
+                    .Grow()
+                    .ClipContent()
+                    .ScrollY(ref state.ScrollOffset)
+                    .VerticalLayout())
                 {
                     for (var index = 0; index < 14; index++)
                     {
-                        using (context.Element(new ElementStyle(
-                            layout: new LayoutConfig(
-                                axis: LayoutAxis.Vertical,
-                                sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()),
-                                padding: new Thickness(16f),
-                                gap: 8f),
-                            box: new BoxStyle(
-                                index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224),
-                                new BorderStyle(new Thickness(1f), new ClayColor(220, 208, 190)),
-                                new CornerRadius(14f),
-                                index == state.Counter % 14 ? new ClayColor(255, 255, 255, 22) : ClayColor.Transparent))))
+                        using(clui.Element()
+                            .Color(index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224))
+                            .Border(new Thickness(1f), new ClayColor(220, 208, 190))
+                            .CornerRadius(14f)
+                            .OverlayColor(index == state.Counter % 14 ? new ClayColor(255, 255, 255, 22) : ClayColor.Transparent)
+                            .Padding(16f)
+                            .Gap(8f)
+                            .GrowHorizontal()
+                            .FitVertical()
+                            .VerticalLayout())
                         {
-                            context.Text(
+                            clui.Text(
                                 $"Panel {index + 1}",
                                 new TextElementStyle(
                                     ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                                     new TextStyle(20f, new ClayColor(38, 33, 28), wrap: false)));
-                            context.Text(
+                            clui.Text(
                                 "The layout engine measures width first, wraps text once widths are final, then resolves heights and positions in later passes.",
                                 new TextElementStyle(
                                     new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
@@ -446,25 +249,27 @@ static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewpor
                 }
             }
 
-            using (context.Element(new ElementStyle(
-                layout: new LayoutConfig(
-                    axis: LayoutAxis.Vertical,
-                    sizing: new ElementSizing(SizeSpec.Fixed(280f), SizeSpec.Grow()),
-                    padding: new Thickness(20f),
-                    gap: 14f),
-                box: new BoxStyle(new ClayColor(44, 53, 68), new BorderStyle(new Thickness(1f), new ClayColor(73, 89, 110)), new CornerRadius(22f)))))
+            using(clui.Element()
+                .Color(new ClayColor(44, 53, 68))
+                .Border(new Thickness(1f), new ClayColor(73, 89, 110))
+                .CornerRadius(22f)
+                .Padding(20f)
+                .Gap(14f)
+                .FitHorizontal(280f)
+                .GrowVertical()
+                .VerticalLayout())
             {
-                context.Text(
+                clui.Text(
                     "Renderer Notes",
                     new TextElementStyle(
                         ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                         new TextStyle(22f, new ClayColor(244, 240, 231), wrap: false)));
-                context.Text(
+                clui.Text(
                     "This demo resolves wrapped text in ClaySharp, then feeds a flat stream of rectangle, border, text, scissor, overlay, image, and custom commands into the Raylib painter.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
-                context.Text(
+                clui.Text(
                     "Interaction is derived from the previous frame's layout via hit-testing on element bounds.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
@@ -474,23 +279,24 @@ static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewpor
 
         if (state.ToastVisible)
         {
-            using (context.Element(new ElementStyle(
-                id: ToastId,
-                layout: new LayoutConfig(
-                    axis: LayoutAxis.Vertical,
-                    sizing: new ElementSizing(SizeSpec.Fixed(320f), SizeSpec.Fit()),
-                    padding: new Thickness(18f),
-                    gap: 8f,
-                    positionMode: PositionMode.Absolute,
-                    absolutePosition: new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f)),
-                box: new BoxStyle(new ClayColor(28, 31, 39, 245), new BorderStyle(new Thickness(1f), new ClayColor(122, 138, 167)), new CornerRadius(18f), new ClayColor(255, 255, 255, 18)))))
+            using(clui.Element()
+                .Color(new ClayColor(28, 31, 39, 245))
+                .Border(new Thickness(1f), new ClayColor(122, 138, 167))
+                .CornerRadius(18f)
+                .OverlayColor(new ClayColor(255, 255, 255, 18))
+                .Padding(18f)
+                .Gap(8f)
+                .FitHorizontal(320f)
+                .PositionMode(PositionMode.Absolute)
+                .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f))
+                .VerticalLayout())
             {
-                context.Text(
+                clui.Text(
                     "Absolute Overlay",
                     new TextElementStyle(
                         ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                         new TextStyle(20f, new ClayColor(242, 245, 240), wrap: false)));
-                context.Text(
+                clui.Text(
                     "This panel is removed from normal flow and anchored against the root container with an absolute position.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
@@ -499,7 +305,7 @@ static void BuildUi(ClayContext context, ITextMeasurer measurer, Vector2 viewpor
         }
     }
 
-    context.EndLayout();
+    clui.End();
 }
 
 static string ExportSnapshot(ClayRaylibRenderer renderer, ReadOnlySpan<RenderCommand> commands, string outputPath, int width, int height)
@@ -581,56 +387,25 @@ static string? ParseSnapshotPath(string[] args)
 
 static Color GetCanvasBackground() => new(236, 229, 220, 255);
 
-static ElementStyle ButtonStyle(ulong id, bool hovered, ClayColor background, ClayColor foreground, Vector2 size)
-{
-    var overlay = hovered ? new ClayColor(255, 255, 255, 28) : ClayColor.Transparent;
-    return new ElementStyle(
-        id,
-        new LayoutConfig(axis: LayoutAxis.Vertical, sizing: ElementSizing.Fixed(size.X, size.Y)),
-        new BoxStyle(background, new BorderStyle(new Thickness(1f), foreground), new CornerRadius(16f), overlay));
-}
-
 static void NiceSummaryCard(ClayGui clui, string title, string value, ClayColor accent)
 {
     using (clui.Element()
-        .BackgroundColor(new ClayColor(252, 249, 244))
-        .Border(new Thickness(1f), new ClayColor(205, 193, 176))
-        .CornerRadius(22f)
-        .Padding(20f)
-        .Gap(16f)
-        .FitHorizontal()
-        .GrowVertical()
+        .BackgroundColor(new ClayColor(255, 252, 247))
+        .Border(new Thickness(1f), new ClayColor(220, 208, 190))
+        .CornerRadius(16f)
+        .OverlayColor(new ClayColor(accent.R, accent.G, accent.B, 18))
+        .Padding(16f)
+        .Gap(6f)
+        .GrowHorizontal()
+        .FitVertical()
         .VerticalLayout())
     {
         clui.Text(
             title,
             new TextElementStyle(
-                new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Fit())),
-                new TextStyle(16f, new ClayColor(96, 86, 74), wrap: false)));
-        clui.Text(
-            value,
-            new TextElementStyle(
-                new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Fit())),
-                new TextStyle(26f, new ClayColor(38, 33, 28), wrap: false)));
-    }
-}
-
-static void SummaryCard(ClayContext context, string title, string value, ClayColor accent)
-{
-    using (context.Element(new ElementStyle(
-        layout: new LayoutConfig(
-            axis: LayoutAxis.Vertical,
-            sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()),
-            padding: new Thickness(16f),
-            gap: 6f),
-        box: new BoxStyle(new ClayColor(255, 252, 247), new BorderStyle(new Thickness(1f), new ClayColor(220, 208, 190)), new CornerRadius(16f), new ClayColor(accent.R, accent.G, accent.B, 18)))))
-    {
-        context.Text(
-            title,
-            new TextElementStyle(
                 ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                 new TextStyle(16f, new ClayColor(96, 86, 74), wrap: false)));
-        context.Text(
+        clui.Text(
             value,
             new TextElementStyle(
                 ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
@@ -640,16 +415,9 @@ static void SummaryCard(ClayContext context, string title, string value, ClayCol
 
 sealed class DemoState
 {
-    public DemoState(float maxScroll)
-    {
-        MaxScroll = maxScroll;
-    }
-
     public int Counter { get; set; }
 
     public bool ToastVisible;
 
-    public float ScrollOffset { get; set; }
-
-    public float MaxScroll { get; }
+    public float ScrollOffset;
 }

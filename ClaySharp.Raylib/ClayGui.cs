@@ -12,10 +12,14 @@ public sealed class ClayGui
 
     private readonly ClayContext _context;
     private readonly ITextMeasurer _textMeasurer;
+    private readonly HashSet<ulong> _trackedElementIds = [];
+    private readonly Dictionary<ulong, RectF> _previousBounds = [];
+    private readonly Dictionary<ulong, RectF> _previousFlowContentBounds = [];
 
     private Vector2 _viewport;
     private ulong _hoveredElementId;
     private bool _leftPressed;
+    private float _mouseWheelMove;
     private ulong _nextInteractionId;
     private bool _legacyScrollAssigned;
 
@@ -30,6 +34,8 @@ public sealed class ClayGui
 
     public int ElementCount => _context.ElementCount;
 
+    public ReadOnlySpan<RenderCommand> RenderCommands => _context.RenderCommands;
+
     public void SetViewport(Vector2 viewport)
     {
         _viewport = viewport;
@@ -40,6 +46,11 @@ public sealed class ClayGui
         var mousePosition = RL.GetMousePosition();
         _hoveredElementId = _context.TryHitTest(mousePosition, out var elementId) ? elementId : 0UL;
         _leftPressed = RL.IsMouseButtonPressed(MouseButton.Left);
+        _mouseWheelMove = RL.GetMouseWheelMove();
+
+        CapturePreviousElementMetrics();
+        _trackedElementIds.Clear();
+
         _nextInteractionId = FirstInteractionId;
         _legacyScrollAssigned = false;
 
@@ -133,6 +144,43 @@ public sealed class ClayGui
 
     private bool IsClicked(ulong elementId) => elementId != 0 && elementId == _hoveredElementId && _leftPressed;
 
+    private void TrackElementId(ulong elementId)
+    {
+        if (elementId != 0)
+        {
+            _trackedElementIds.Add(elementId);
+        }
+    }
+
+    private void CapturePreviousElementMetrics()
+    {
+        _previousBounds.Clear();
+        _previousFlowContentBounds.Clear();
+
+        foreach (var elementId in _trackedElementIds)
+        {
+            if (_context.TryGetBounds(elementId, out var bounds))
+            {
+                _previousBounds[elementId] = bounds;
+            }
+
+            if (_context.TryGetFlowContentBounds(elementId, out var contentBounds))
+            {
+                _previousFlowContentBounds[elementId] = contentBounds;
+            }
+        }
+    }
+
+    private bool TryGetPreviousBounds(ulong elementId, out RectF bounds)
+    {
+        return _previousBounds.TryGetValue(elementId, out bounds);
+    }
+
+    private bool TryGetPreviousFlowContentBounds(ulong elementId, out RectF bounds)
+    {
+        return _previousFlowContentBounds.TryGetValue(elementId, out bounds);
+    }
+
     public struct ElementBuilder : IDisposable
     {
         private readonly ClayGui _gui;
@@ -214,6 +262,14 @@ public sealed class ClayGui
             return this;
         }
 
+        public ElementBuilder GrowHorizontal()
+        {
+            var sizing = new ElementSizing(SizeSpec.Grow(), _style.Layout.Sizing.Height);
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, sizing: sizing), _style.Box);
+            Apply();
+            return this;
+        }
+
         public ElementBuilder GrowVertical()
         {
             var sizing = new ElementSizing(_style.Layout.Sizing.Width, SizeSpec.Grow());
@@ -233,6 +289,14 @@ public sealed class ClayGui
         public ElementBuilder FitHorizontal(float width)
         {
             var sizing = new ElementSizing(SizeSpec.Fixed(width), _style.Layout.Sizing.Height);
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, sizing: sizing), _style.Box);
+            Apply();
+            return this;
+        }
+
+        public ElementBuilder FitVertical()
+        {
+            var sizing = new ElementSizing(_style.Layout.Sizing.Width, SizeSpec.Fit());
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, sizing: sizing), _style.Box);
             Apply();
             return this;
@@ -300,6 +364,16 @@ public sealed class ClayGui
             return this;
         }
 
+        public ElementBuilder ScrollY(ref float offset, float step = 36f)
+        {
+            return ScrollYCore(ref offset, null, step);
+        }
+
+        public ElementBuilder ScrollY(ref float offset, float maxOffset, float step = 36f)
+        {
+            return ScrollYCore(ref offset, MathF.Max(0f, maxOffset), step);
+        }
+
         public ElementBuilder PositionMode(PositionMode mode)
         {
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, positionMode: mode), _style.Box);
@@ -325,11 +399,13 @@ public sealed class ClayGui
         {
             if (_assignedId != 0)
             {
+                _gui.TrackElementId(_assignedId);
                 return _assignedId;
             }
 
             _assignedId = _gui.AllocateInteractionId();
             _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
+            _gui.TrackElementId(_assignedId);
             Apply();
             return _assignedId;
         }
@@ -338,17 +414,58 @@ public sealed class ClayGui
         {
             if (_assignedId != 0)
             {
+                _gui.TrackElementId(_assignedId);
                 return;
             }
 
             _assignedId = _gui.AllocateScrollId();
             _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
+            _gui.TrackElementId(_assignedId);
             Apply();
         }
 
         private void Apply()
         {
             _gui._context.UpdateCurrentElementStyle(_style);
+        }
+
+        private ElementBuilder ScrollYCore(ref float offset, float? maxOffset, float step)
+        {
+            EnsureScrollId();
+
+            var resolvedMaxOffset = GetMaxScrollOffset();
+            if (maxOffset.HasValue)
+            {
+                resolvedMaxOffset = MathF.Min(resolvedMaxOffset, maxOffset.Value);
+            }
+
+            if (_gui.IsHovered(_assignedId) && MathF.Abs(_gui._mouseWheelMove) > 0.001f)
+            {
+                offset -= _gui._mouseWheelMove * step;
+            }
+
+            offset = Math.Clamp(offset, 0f, resolvedMaxOffset);
+
+            var scrollOffset = new Vector2(_style.Layout.ScrollOffset.X, offset);
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, scrollOffset: scrollOffset), _style.Box);
+            Apply();
+            return this;
+        }
+
+        private float GetMaxScrollOffset()
+        {
+            if (!_gui.TryGetPreviousBounds(_assignedId, out var bounds))
+            {
+                return 0f;
+            }
+
+            if (!_gui.TryGetPreviousFlowContentBounds(_assignedId, out var contentBounds))
+            {
+                return 0f;
+            }
+
+            var visibleHeight = MathF.Max(0f, bounds.Height - _style.Layout.Padding.Vertical);
+            return MathF.Max(0f, contentBounds.Height - visibleHeight);
         }
     }
 

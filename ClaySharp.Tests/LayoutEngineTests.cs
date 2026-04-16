@@ -180,6 +180,41 @@ public sealed class LayoutEngineTests
         Assert.Equal(40f, secondBounds.Y - firstBounds.Y, 2);
     }
 
+    [Fact]
+    public void FlowContentBounds_UnionFlowChildrenAndIgnoreAbsoluteChildren()
+    {
+        using var context = new ClayContext();
+        var measurer = new MonospaceTextMeasurer();
+
+        context.BeginLayout(new Vector2(300f, 200f), measurer);
+        using (context.Element(new ElementStyle(
+            60,
+            new LayoutConfig(
+                axis: LayoutAxis.Vertical,
+                sizing: ElementSizing.Fixed(120f, 80f),
+                padding: new Thickness(10f),
+                gap: 5f,
+                clipContent: true,
+                scrollOffset: new Vector2(0f, 25f)),
+            new BoxStyle(new ClayColor(220, 220, 220)))))
+        {
+            context.Box(new ElementStyle(61, new LayoutConfig(sizing: ElementSizing.Fixed(100f, 30f))));
+            context.Box(new ElementStyle(62, new LayoutConfig(sizing: ElementSizing.Fixed(100f, 40f))));
+            context.Box(new ElementStyle(
+                63,
+                new LayoutConfig(
+                    sizing: ElementSizing.Fixed(100f, 100f),
+                    positionMode: PositionMode.Absolute,
+                    absolutePosition: new AbsolutePosition(Alignment.End, Alignment.End))));
+        }
+
+        context.EndLayout();
+
+        Assert.True(context.TryGetFlowContentBounds(60, out var contentBounds));
+        Assert.Equal(100f, contentBounds.Width, 2);
+        Assert.Equal(75f, contentBounds.Height, 2);
+    }
+
     private sealed class MonospaceTextMeasurer : ITextMeasurer
     {
         public float MeasureWidth(ReadOnlySpan<char> text, in TextStyle style) => text.Length * 10f;

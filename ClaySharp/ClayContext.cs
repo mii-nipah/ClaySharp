@@ -188,20 +188,71 @@ public sealed class ClayContext : IDisposable
 
     public bool TryGetBounds(ulong elementId, out RectF bounds)
     {
-        for (var index = 1; index < _nodeCount; index++)
+        var nodeIndex = FindNodeIndex(elementId);
+        if (nodeIndex >= 0)
         {
-            ref readonly var node = ref _nodes[index];
-            if (node.Style.Id != elementId)
-            {
-                continue;
-            }
-
+            ref readonly var node = ref _nodes[nodeIndex];
             bounds = new RectF(node.AbsoluteX, node.AbsoluteY, node.ResolvedWidth, node.ResolvedHeight);
             return true;
         }
 
         bounds = default;
         return false;
+    }
+
+    public bool TryGetFlowContentBounds(ulong elementId, out RectF bounds)
+    {
+        var nodeIndex = FindNodeIndex(elementId);
+        if (nodeIndex < 0)
+        {
+            bounds = default;
+            return false;
+        }
+
+        var hasBounds = false;
+        var minX = 0f;
+        var minY = 0f;
+        var maxX = 0f;
+        var maxY = 0f;
+
+        for (var childIndex = _nodes[nodeIndex].FirstChildIndex; childIndex >= 0; childIndex = _nodes[childIndex].NextSiblingIndex)
+        {
+            ref readonly var child = ref _nodes[childIndex];
+            if (child.Style.Layout.PositionMode != PositionMode.Flow)
+            {
+                continue;
+            }
+
+            var childLeft = child.AbsoluteX;
+            var childTop = child.AbsoluteY;
+            var childRight = child.AbsoluteX + child.ResolvedWidth;
+            var childBottom = child.AbsoluteY + child.ResolvedHeight;
+
+            if (!hasBounds)
+            {
+                minX = childLeft;
+                minY = childTop;
+                maxX = childRight;
+                maxY = childBottom;
+                hasBounds = true;
+                continue;
+            }
+
+            minX = MathF.Min(minX, childLeft);
+            minY = MathF.Min(minY, childTop);
+            maxX = MathF.Max(maxX, childRight);
+            maxY = MathF.Max(maxY, childBottom);
+        }
+
+        if (!hasBounds)
+        {
+            bounds = default;
+            return false;
+        }
+
+        bounds = new RectF(minX, minY, maxX - minX, maxY - minY);
+        return true;
+
     }
 
     public bool TryHitTest(Vector2 point, out ulong elementId)
@@ -1246,6 +1297,19 @@ public sealed class ClayContext : IDisposable
         {
             throw new InvalidOperationException("BeginLayout must be called before building a UI tree.");
         }
+    }
+
+    private int FindNodeIndex(ulong elementId)
+    {
+        for (var index = 1; index < _nodeCount; index++)
+        {
+            if (_nodes[index].Style.Id == elementId)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private ITextMeasurer RequireTextMeasurer() => _textMeasurer ?? throw new InvalidOperationException("A text measurer is required for layout.");
