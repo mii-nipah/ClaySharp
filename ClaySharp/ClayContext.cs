@@ -316,14 +316,32 @@ public sealed class ClayContext : IDisposable
         }
 
         var bounds = new RectF(node.AbsoluteX, node.AbsoluteY, node.ResolvedWidth, node.ResolvedHeight);
-        if (bounds.Contains(point))
+        if (!bounds.Contains(point))
         {
-            elementId = node.Style.Id;
-            return true;
+            elementId = 0;
+            return false;
         }
 
-        elementId = 0;
-        return false;
+        // Walk ancestors to check if the point is clipped by any parent with ClipContent
+        var parentIndex = node.ParentIndex;
+        while (parentIndex > 0)
+        {
+            ref readonly var parent = ref _nodes[parentIndex];
+            if (parent.Style.Layout.ClipContent)
+            {
+                var clipBounds = new RectF(parent.AbsoluteX, parent.AbsoluteY, parent.ResolvedWidth, parent.ResolvedHeight);
+                if (!clipBounds.Contains(point))
+                {
+                    elementId = 0;
+                    return false;
+                }
+            }
+
+            parentIndex = parent.ParentIndex;
+        }
+
+        elementId = node.Style.Id;
+        return true;
     }
 
     private void ResolveWidths()
