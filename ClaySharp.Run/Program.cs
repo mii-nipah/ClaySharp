@@ -94,6 +94,13 @@ static void Game(ClayGui clui, DemoState state)
 {
     clui.Begin();
 
+    var badgePhase = 0.5f + (0.5f * MathF.Sin((float)Raylib.GetTime() * 2.2f));
+    var badgeOffsetY = state.ToastVisible ? 188f : 132f;
+    var badgeColor = new ClayColor(
+        LerpByte(190, 236, badgePhase),
+        LerpByte(132, 168, badgePhase),
+        LerpByte(96, 124, badgePhase));
+
     using(clui.Element()
         .Color(244, 239, 231)
         .Padding(24f)
@@ -132,6 +139,7 @@ static void Game(ClayGui clui, DemoState state)
             }
 
             using(clui.Element()
+                .Animated(0.18f)
                 .BackgroundColor(new ClayColor(60, 89, 84))
                 .Border(new Thickness(1f), new ClayColor(242, 245, 240))
                 .CornerRadius(16f)
@@ -173,7 +181,7 @@ static void Game(ClayGui clui, DemoState state)
                     .HorizontalLayout())
                 {
                     NiceSummaryCard(clui, "Counter", state.Counter.ToString(), new ClayColor(115, 145, 121));
-                    NiceSummaryCard(clui, "Scroll", $"{state.ScrollOffset:0}px", new ClayColor(183, 123, 89));
+                    NiceSummaryCard(clui, "Scroll", $"{state.LastObservedScrollOffset:0}px", new ClayColor(183, 123, 89));
                     NiceSummaryCard(clui, "Nodes", clui.ElementCount.ToString(), new ClayColor(89, 112, 144));
                 }
 
@@ -184,6 +192,7 @@ static void Game(ClayGui clui, DemoState state)
                     .HorizontalLayout())
                 {
                     using(clui.Element()
+                        .Animated(0.16f)
                         .BackgroundColor(new ClayColor(28, 31, 39))
                         .Border(new Thickness(1f), new ClayColor(239, 239, 235))
                         .CornerRadius(16f)
@@ -204,7 +213,7 @@ static void Game(ClayGui clui, DemoState state)
                     }
 
                     clui.Text(
-                        "The list below is clipped by a scissor region and offset with a user-managed scroll value.",
+                        "The list below uses ClayGui.ScrollableY with retained momentum and automatic semantic identity instead of a user-managed ref float.",
                         new TextElementStyle(
                             new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                             new TextStyle(17f, new ClayColor(84, 74, 62), lineHeight: 24f, wrap: true)));
@@ -217,13 +226,15 @@ static void Game(ClayGui clui, DemoState state)
                     .Padding(18f)
                     .Gap(12f)
                     .Grow()
-                    .ClipContent()
-                    .ScrollY(ref state.ScrollOffset)
+                    .ScrollableY(out var scrollOffset)
                     .VerticalLayout())
                 {
+                    state.LastObservedScrollOffset = scrollOffset;
+
                     for (var index = 0; index < 14; index++)
                     {
                         using(clui.Element()
+                            .Animated(0.18f)
                             .Color(index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224))
                             .Border(new Thickness(1f), new ClayColor(220, 208, 190))
                             .CornerRadius(14f)
@@ -265,43 +276,70 @@ static void Game(ClayGui clui, DemoState state)
                         ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                         new TextStyle(22f, new ClayColor(244, 240, 231), wrap: false)));
                 clui.Text(
-                    "This demo resolves wrapped text in ClaySharp, then feeds a flat stream of rectangle, border, text, scissor, overlay, image, and custom commands into the Raylib painter.",
+                    "This build now extracts floating absolute elements into a z-sorted render pass, so stacked overlays paint on top without inheriting parent clipping or scroll offsets.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
                 clui.Text(
-                    "Interaction is derived from the previous frame's layout via hit-testing on element bounds.",
+                    "Animated containers retain their previous render commands and ease toward the latest layout, which gives immediate-mode code smooth motion without manual tween bookkeeping.",
+                    new TextElementStyle(
+                        new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
+                        new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
+                clui.Text(
+                    "Retained ids are now derived automatically from each element's semantic shape plus invocation order, so animated overlays and scroll regions no longer need string keys in normal usage.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
             }
         }
+    }
 
-        if (state.ToastVisible)
+    using(clui.Element()
+        .Animated(0.35f)
+        .Floating(8)
+        .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -36f, badgeOffsetY))
+        .BackgroundColor(new ClayColor(badgeColor.R, badgeColor.G, badgeColor.B, 240))
+        .Border(new Thickness(1f), new ClayColor(255, 246, 230, 210))
+        .CornerRadius(999f)
+        .Padding(14f, 10f)
+        .Gap(6f)
+        .FitHorizontal()
+        .FitVertical()
+        .HorizontalLayout()
+        .CrossAlignment(Alignment.Center))
+    {
+        clui.Text(
+            state.ToastVisible ? "z-index 8" : "floating chip",
+            new TextElementStyle(
+                ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
+                new TextStyle(16f, new ClayColor(42, 31, 24), wrap: false)));
+    }
+
+    if (state.ToastVisible)
+    {
+        using(clui.Element()
+            .Animated(0.28f)
+            .Floating(20)
+            .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 116f))
+            .Color(new ClayColor(28, 31, 39, 245))
+            .Border(new Thickness(1f), new ClayColor(122, 138, 167))
+            .CornerRadius(18f)
+            .OverlayColor(new ClayColor(255, 255, 255, 18))
+            .Padding(18f)
+            .Gap(8f)
+            .FitHorizontal(320f)
+            .VerticalLayout())
         {
-            using(clui.Element()
-                .Color(new ClayColor(28, 31, 39, 245))
-                .Border(new Thickness(1f), new ClayColor(122, 138, 167))
-                .CornerRadius(18f)
-                .OverlayColor(new ClayColor(255, 255, 255, 18))
-                .Padding(18f)
-                .Gap(8f)
-                .FitHorizontal(320f)
-                .PositionMode(PositionMode.Absolute)
-                .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f))
-                .VerticalLayout())
-            {
-                clui.Text(
-                    "Absolute Overlay",
-                    new TextElementStyle(
-                        ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
-                        new TextStyle(20f, new ClayColor(242, 245, 240), wrap: false)));
-                clui.Text(
-                    "This panel is removed from normal flow and anchored against the root container with an absolute position.",
-                    new TextElementStyle(
-                        new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
-                        new TextStyle(16f, new ClayColor(205, 214, 222), lineHeight: 22f, wrap: true)));
-            }
+            clui.Text(
+                "Animated Floating Overlay",
+                new TextElementStyle(
+                    ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
+                    new TextStyle(20f, new ClayColor(242, 245, 240), wrap: false)));
+            clui.Text(
+                "This panel is mounted conditionally. Its enter and exit motion now comes from the retained transition state instead of manual alpha bookkeeping.",
+                new TextElementStyle(
+                    new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
+                    new TextStyle(16f, new ClayColor(205, 214, 222), lineHeight: 22f, wrap: true)));
         }
     }
 
@@ -390,6 +428,7 @@ static Color GetCanvasBackground() => new(236, 229, 220, 255);
 static void NiceSummaryCard(ClayGui clui, string title, string value, ClayColor accent)
 {
     using (clui.Element()
+        .Animated(0.18f)
         .BackgroundColor(new ClayColor(255, 252, 247))
         .Border(new Thickness(1f), new ClayColor(220, 208, 190))
         .CornerRadius(16f)
@@ -413,11 +452,16 @@ static void NiceSummaryCard(ClayGui clui, string title, string value, ClayColor 
     }
 }
 
+static byte LerpByte(byte from, byte to, float factor)
+{
+    return (byte)Math.Clamp(MathF.Round(from + ((to - from) * factor)), 0f, 255f);
+}
+
 sealed class DemoState
 {
     public int Counter { get; set; }
 
-    public bool ToastVisible;
+    public bool ToastVisible = true;
 
-    public float ScrollOffset;
+    public float LastObservedScrollOffset;
 }
