@@ -8,9 +8,11 @@ namespace ClaySharp.Raylib;
 public sealed class ClayGui
 {
     private const float DefaultTransitionDuration = 0.22f;
+    private const float DefaultTransitionOffset = 14f;
     private const int RetainedStateTtlFrames = 180;
-    private const ulong FirstInteractionId = 1024UL;
-    private const ulong FirstLegacyScrollId = 3UL;
+    private const ulong AutomaticIdentityNamespace = 0xC1A94E1D9F42A6B7UL;
+    private const ulong HashOffsetBasis = 14695981039346656037UL;
+    private const ulong HashPrime = 1099511628211UL;
 
     private readonly ClayContext _context;
     private readonly ITextMeasurer _textMeasurer;
@@ -20,13 +22,12 @@ public sealed class ClayGui
     private readonly Dictionary<ulong, ScrollState> _scrollStates = [];
     private readonly Dictionary<ulong, TransitionState> _transitionStates = [];
     private readonly Dictionary<ulong, int> _transitionCommandIndices = [];
+    private readonly Dictionary<ulong, ulong> _automaticIdentityCounts = [];
 
     private Vector2 _viewport;
     private ulong _hoveredElementId;
     private bool _leftPressed;
-    private float _mouseWheelMove;
-    private ulong _nextInteractionId;
-    private bool _legacyScrollAssigned;
+    private Vector2 _mouseWheelMove;
     private float _frameDeltaTime;
     private int _frameGeneration;
     private RenderCommand[] _animatedRenderCommands = Array.Empty<RenderCommand>();
@@ -38,7 +39,6 @@ public sealed class ClayGui
         _textMeasurer = textMeasurer ?? throw new ArgumentNullException(nameof(textMeasurer));
         _ = renderer ?? throw new ArgumentNullException(nameof(renderer));
         _viewport = new Vector2(RL.GetScreenWidth(), RL.GetScreenHeight());
-        _nextInteractionId = FirstInteractionId;
     }
 
     public int ElementCount => _context.ElementCount;
@@ -58,13 +58,12 @@ public sealed class ClayGui
         var mousePosition = RL.GetMousePosition();
         _hoveredElementId = _context.TryHitTest(mousePosition, out var elementId) ? elementId : 0UL;
         _leftPressed = RL.IsMouseButtonPressed(MouseButton.Left);
-        _mouseWheelMove = RL.GetMouseWheelMove();
+        _mouseWheelMove = RL.GetMouseWheelMoveV();
 
         CapturePreviousElementMetrics();
         _trackedElementIds.Clear();
 
-        _nextInteractionId = FirstInteractionId;
-        _legacyScrollAssigned = false;
+        _automaticIdentityCounts.Clear();
 
         var viewport = _viewport;
         if (viewport.X <= 0f || viewport.Y <= 0f)
@@ -145,22 +144,30 @@ public sealed class ClayGui
             overlayColor ?? box.OverlayColor);
     }
 
-    private ulong AllocateInteractionId() => _nextInteractionId++;
-
-    private ulong AllocateScrollId()
+    private ulong ClaimAutomaticIdentityOrdinal(ulong semanticHash)
     {
-        if (!_legacyScrollAssigned)
-        {
-            _legacyScrollAssigned = true;
-            return FirstLegacyScrollId;
-        }
-
-        return AllocateInteractionId();
+        var ordinal = _automaticIdentityCounts.TryGetValue(semanticHash, out var currentOrdinal)
+            ? currentOrdinal + 1UL
+            : 1UL;
+        _automaticIdentityCounts[semanticHash] = ordinal;
+        return ordinal;
     }
 
     private bool IsHovered(ulong elementId) => elementId != 0 && elementId == _hoveredElementId;
 
     private bool IsClicked(ulong elementId) => elementId != 0 && elementId == _hoveredElementId && _leftPressed;
+
+    private bool IsMouseOver(ulong elementId)
+    {
+        if (elementId == 0 || !_previousBounds.TryGetValue(elementId, out var bounds))
+        {
+            return false;
+        }
+
+        var mouse = RL.GetMousePosition();
+        return mouse.X >= bounds.X && mouse.X <= bounds.X + bounds.Width
+            && mouse.Y >= bounds.Y && mouse.Y <= bounds.Y + bounds.Height;
+    }
 
     private void TrackElementId(ulong elementId)
     {
@@ -168,6 +175,16 @@ public sealed class ClayGui
         {
             _trackedElementIds.Add(elementId);
         }
+    }
+
+    private void ReplaceTrackedElementId(ulong previousId, ulong nextId)
+    {
+        if (previousId != 0 && previousId != nextId)
+        {
+            _trackedElementIds.Remove(previousId);
+        }
+
+        TrackElementId(nextId);
     }
 
     private void CapturePreviousElementMetrics()
@@ -199,6 +216,65 @@ public sealed class ClayGui
         return _previousFlowContentBounds.TryGetValue(elementId, out bounds);
     }
 
+    private ulong ComposeAutomaticIdentity(in ElementStyle style, ulong ordinal)
+    {
+        var hash = ComputeAutomaticIdentityHash(in style);
+        hash = HashValue(hash, AutomaticIdentityNamespace);
+        hash = HashValue(hash, ordinal);
+        return hash == 0 ? 1UL : hash;
+    }
+
+    private static ulong ComputeAutomaticIdentityHash(in ElementStyle style)
+    {
+        var hash = HashOffsetBasis;
+        hash = HashValue(hash, (ulong)style.Layout.Axis);
+        hash = HashValue(hash, (ulong)style.Layout.MainAlignment);
+        hash = HashValue(hash, (ulong)style.Layout.CrossAlignment);
+        hash = HashValue(hash, (ulong)style.Layout.PositionMode);
+        hash = HashValue(hash, style.Layout.ClipContent ? 1UL : 0UL);
+        hash = HashValue(hash, (ulong)(uint)style.Layout.ZIndex);
+        hash = HashSizeSpec(hash, style.Layout.Sizing.Width);
+        hash = HashSizeSpec(hash, style.Layout.Sizing.Height);
+        hash = HashFloat(hash, style.Layout.Padding.Left);
+        hash = HashFloat(hash, style.Layout.Padding.Top);
+        hash = HashFloat(hash, style.Layout.Padding.Right);
+        hash = HashFloat(hash, style.Layout.Padding.Bottom);
+        hash = HashFloat(hash, style.Layout.Gap);
+        hash = HashValue(hash, (ulong)style.Layout.AbsolutePosition.HorizontalAnchor);
+        hash = HashValue(hash, (ulong)style.Layout.AbsolutePosition.VerticalAnchor);
+        hash = HashFloat(hash, style.Layout.AspectRatio);
+        hash = HashFloat(hash, style.Box.Border.Widths.Left);
+        hash = HashFloat(hash, style.Box.Border.Widths.Top);
+        hash = HashFloat(hash, style.Box.Border.Widths.Right);
+        hash = HashFloat(hash, style.Box.Border.Widths.Bottom);
+        hash = HashFloat(hash, style.Box.CornerRadius.TopLeft);
+        hash = HashFloat(hash, style.Box.CornerRadius.TopRight);
+        hash = HashFloat(hash, style.Box.CornerRadius.BottomRight);
+        hash = HashFloat(hash, style.Box.CornerRadius.BottomLeft);
+        return hash;
+    }
+
+    private static ulong HashSizeSpec(ulong hash, in SizeSpec spec)
+    {
+        hash = HashValue(hash, (ulong)spec.Mode);
+        hash = HashFloat(hash, spec.Value);
+        hash = HashFloat(hash, spec.Min);
+        hash = HashFloat(hash, spec.Max);
+        return hash;
+    }
+
+    private static ulong HashFloat(ulong hash, float value)
+    {
+        return HashValue(hash, (ulong)(uint)BitConverter.SingleToUInt32Bits(value));
+    }
+
+    private static ulong HashValue(ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= HashPrime;
+        return hash;
+    }
+
     private void RegisterAnimatedElement(ulong elementId, float durationSeconds)
     {
         if (elementId == 0)
@@ -213,7 +289,6 @@ public sealed class ClayGui
         }
 
         state.DurationSeconds = durationSeconds > 0f ? durationSeconds : DefaultTransitionDuration;
-        state.LastSeenGeneration = _frameGeneration;
     }
 
     private ScrollState GetScrollState(ulong elementId)
@@ -227,10 +302,26 @@ public sealed class ClayGui
         _scrollStates[elementId] = state;
     }
 
+    private float GetVerticalWheelOffset(float step)
+    {
+        var wheelDelta = _mouseWheelMove.Y;
+        if (MathF.Abs(wheelDelta) <= float.Epsilon)
+        {
+            return 0f;
+        }
+
+        if (MathF.Abs(wheelDelta) < 1f)
+        {
+            wheelDelta *= 3f;
+        }
+
+        return -wheelDelta * step;
+    }
+
     private void BuildAnimatedRenderCommands()
     {
         var commands = _context.RenderCommands;
-        EnsureAnimatedCommandCapacity(commands.Length);
+        EnsureAnimatedCommandCapacity(commands.Length + EstimateExitCommandCapacity());
         _animatedRenderCommandCount = 0;
         _transitionCommandIndices.Clear();
 
@@ -250,6 +341,101 @@ public sealed class ClayGui
             if (_transitionStates.TryGetValue(pair.Key, out var state))
             {
                 state.Count = pair.Value;
+                state.IsExiting = false;
+            }
+        }
+
+        EmitExitingTransitions();
+    }
+
+    private int EstimateExitCommandCapacity()
+    {
+        var total = 0;
+        foreach (var pair in _transitionStates)
+        {
+            if (pair.Value.LastSeenGeneration == _frameGeneration || pair.Value.Count == 0)
+            {
+                continue;
+            }
+
+            total += pair.Value.Count;
+        }
+
+        return total;
+    }
+
+    private void EmitExitingTransitions()
+    {
+        if (_transitionStates.Count == 0)
+        {
+            return;
+        }
+
+        Span<ulong> completed = stackalloc ulong[Math.Min(_transitionStates.Count, 32)];
+        List<ulong>? overflow = null;
+        var completedCount = 0;
+
+        foreach (var pair in _transitionStates)
+        {
+            var transitionId = pair.Key;
+            var state = pair.Value;
+            if (state.LastSeenGeneration == _frameGeneration || state.Count == 0)
+            {
+                continue;
+            }
+
+            if (!state.IsExiting)
+            {
+                state.EnsureCapacity(state.Count);
+                for (var index = 0; index < state.Count; index++)
+                {
+                    state.ExitTargets[index] = CreateExitCommand(state.Commands[index]);
+                }
+
+                state.IsExiting = true;
+            }
+
+            EnsureAnimatedCommandCapacity(_animatedRenderCommandCount + state.Count);
+
+            var factor = ComputeTransitionFactor(state.DurationSeconds);
+            var settled = true;
+            for (var index = 0; index < state.Count; index++)
+            {
+                var current = state.Commands[index];
+                var exitTarget = state.ExitTargets[index];
+                var output = InterpolateCommand(current, exitTarget, factor);
+                state.Commands[index] = output;
+                _animatedRenderCommands[_animatedRenderCommandCount++] = output;
+                settled &= IsTransitionSettled(output, exitTarget);
+            }
+
+            if (!settled)
+            {
+                continue;
+            }
+
+            state.Count = 0;
+            if (completedCount < completed.Length)
+            {
+                completed[completedCount++] = transitionId;
+            }
+            else
+            {
+                overflow ??= [];
+                overflow.Add(transitionId);
+            }
+        }
+
+        for (var index = 0; index < completedCount; index++)
+        {
+            _transitionStates.Remove(completed[index]);
+        }
+
+        if (overflow is not null)
+        {
+            foreach (var transitionId in overflow)
+            {
+                _transitionStates.Remove(transitionId);
             }
         }
     }
@@ -258,26 +444,44 @@ public sealed class ClayGui
     {
         if (!_transitionStates.TryGetValue(target.TransitionId, out var state))
         {
-            state = new TransitionState { DurationSeconds = DefaultTransitionDuration, LastSeenGeneration = _frameGeneration };
+            state = new TransitionState { DurationSeconds = DefaultTransitionDuration, LastSeenGeneration = 0 };
             _transitionStates[target.TransitionId] = state;
         }
-
-        state.LastSeenGeneration = _frameGeneration;
 
         var nextIndex = _transitionCommandIndices.TryGetValue(target.TransitionId, out var currentIndex)
             ? currentIndex
             : 0;
         _transitionCommandIndices[target.TransitionId] = nextIndex + 1;
 
+        var seenPreviousFrame = state.LastSeenGeneration == (_frameGeneration - 1);
+        state.LastSeenGeneration = _frameGeneration;
+        state.IsExiting = false;
         state.EnsureCapacity(nextIndex + 1);
-        if (nextIndex >= state.Count || !CanInterpolate(state.Commands[nextIndex], target))
-        {
-            state.Commands[nextIndex] = target;
-            return target;
-        }
 
         var factor = ComputeTransitionFactor(state.DurationSeconds);
-        var blended = InterpolateCommand(state.Commands[nextIndex], target, factor);
+
+        RenderCommand blended;
+        if (!seenPreviousFrame && _frameGeneration > 1)
+        {
+            // Enter transition: interpolate everything (slide + fade in)
+            var start = CreateEnterCommand(target);
+            if (nextIndex < state.Count && CanInterpolate(state.Commands[nextIndex], start))
+            {
+                start = state.Commands[nextIndex];
+            }
+
+            blended = InterpolateCommand(start, target, factor);
+        }
+        else if (nextIndex < state.Count && CanInterpolate(state.Commands[nextIndex], target))
+        {
+            // Normal transition: only interpolate colors, snap bounds to layout position
+            blended = InterpolateVisuals(state.Commands[nextIndex], target, factor);
+        }
+        else
+        {
+            blended = target;
+        }
+
         state.Commands[nextIndex] = blended;
         return blended;
     }
@@ -319,6 +523,95 @@ public sealed class ClayGui
             UseSourceRegion = target.UseSourceRegion,
             Payload = target.Payload,
         };
+    }
+
+    /// <summary>
+    /// Interpolates only visual properties (colors, alpha) while snapping bounds to the layout target.
+    /// Used for normal frame-to-frame transitions so scroll/hover don't cause laggy position easing.
+    /// </summary>
+    private static RenderCommand InterpolateVisuals(in RenderCommand previous, in RenderCommand target, float factor)
+    {
+        if (factor >= 0.999f)
+        {
+            return target;
+        }
+
+        return new RenderCommand
+        {
+            Type = target.Type,
+            ElementId = target.ElementId,
+            TransitionId = target.TransitionId,
+            Bounds = target.Bounds,
+            Color = Lerp(previous.Color, target.Color, factor),
+            Thickness = target.Thickness,
+            CornerRadius = target.CornerRadius,
+            Text = target.Text,
+            TextStyle = Lerp(previous.TextStyle, target.TextStyle, factor),
+            SourceRegion = target.SourceRegion,
+            UseSourceRegion = target.UseSourceRegion,
+            Payload = target.Payload,
+        };
+    }
+
+    private static RenderCommand CreateEnterCommand(in RenderCommand target)
+    {
+        return CreateTransitionPose(target, 0f, DefaultTransitionOffset);
+    }
+
+    private static RenderCommand CreateExitCommand(in RenderCommand current)
+    {
+        return CreateTransitionPose(current, 0f, -DefaultTransitionOffset);
+    }
+
+    private static RenderCommand CreateTransitionPose(in RenderCommand source, float alphaScale, float offsetY)
+    {
+        return new RenderCommand
+        {
+            Type = source.Type,
+            ElementId = source.ElementId,
+            TransitionId = source.TransitionId,
+            Bounds = new RectF(source.Bounds.X, source.Bounds.Y + offsetY, source.Bounds.Width, source.Bounds.Height),
+            Color = ScaleAlpha(source.Color, alphaScale),
+            Thickness = source.Thickness,
+            CornerRadius = source.CornerRadius,
+            Text = source.Text,
+            TextStyle = ScaleAlpha(source.TextStyle, alphaScale),
+            SourceRegion = source.SourceRegion,
+            UseSourceRegion = source.UseSourceRegion,
+            Payload = source.Payload,
+        };
+    }
+
+    private static ClayColor ScaleAlpha(ClayColor color, float alphaScale)
+    {
+        return new ClayColor(color.R, color.G, color.B, (byte)Math.Clamp(MathF.Round(color.A * alphaScale), 0f, 255f));
+    }
+
+    private static TextStyle ScaleAlpha(in TextStyle style, float alphaScale)
+    {
+        return new TextStyle(
+            style.FontSize,
+            ScaleAlpha(style.Color, alphaScale),
+            style.FontId,
+            style.LetterSpacing,
+            style.LineHeight,
+            style.HorizontalAlignment,
+            style.Wrap);
+    }
+
+    private static bool IsTransitionSettled(in RenderCommand current, in RenderCommand target)
+    {
+        return NearlyEqual(current.Bounds.X, target.Bounds.X)
+            && NearlyEqual(current.Bounds.Y, target.Bounds.Y)
+            && NearlyEqual(current.Bounds.Width, target.Bounds.Width)
+            && NearlyEqual(current.Bounds.Height, target.Bounds.Height)
+            && current.Color.A == target.Color.A
+            && current.TextStyle.Color.A == target.TextStyle.Color.A;
+    }
+
+    private static bool NearlyEqual(float left, float right)
+    {
+        return MathF.Abs(left - right) <= 0.5f;
     }
 
     private void CleanupRetainedState()
@@ -481,26 +774,36 @@ public sealed class ClayGui
     private sealed class TransitionState
     {
         public RenderCommand[] Commands = Array.Empty<RenderCommand>();
+        public RenderCommand[] ExitTargets = Array.Empty<RenderCommand>();
         public int Count;
         public float DurationSeconds = DefaultTransitionDuration;
         public int LastSeenGeneration;
+        public bool IsExiting;
 
         public void EnsureCapacity(int required)
         {
-            if (Commands.Length >= required)
+            if (Commands.Length >= required && ExitTargets.Length >= required)
             {
                 return;
             }
 
-            Array.Resize(ref Commands, Math.Max(required, Math.Max(Commands.Length * 2, 4)));
+            var capacity = Math.Max(required, Math.Max(Commands.Length * 2, 4));
+            Array.Resize(ref Commands, capacity);
+            Array.Resize(ref ExitTargets, capacity);
         }
     }
 
     private struct ScrollState
     {
         public float Offset;
-        public float Velocity;
         public int LastSeenGeneration;
+    }
+
+    private enum ElementIdentityMode
+    {
+        None,
+        Automatic,
+        Explicit,
     }
 
     public struct ElementBuilder : IDisposable
@@ -508,6 +811,8 @@ public sealed class ClayGui
         private readonly ClayGui _gui;
         private ElementStyle _style;
         private ulong _assignedId;
+        private ulong _identityOrdinal;
+        private ElementIdentityMode _identityMode;
         private bool _disposed;
 
         internal ElementBuilder(ClayGui gui, ElementStyle style)
@@ -515,6 +820,8 @@ public sealed class ClayGui
             _gui = gui;
             _style = style;
             _assignedId = style.Id;
+            _identityOrdinal = 0;
+            _identityMode = style.Id != 0 ? ElementIdentityMode.Explicit : ElementIdentityMode.None;
             _disposed = false;
         }
 
@@ -567,7 +874,18 @@ public sealed class ClayGui
                 throw new ArgumentException("A stable key is required.", nameof(key));
             }
 
-            AssignId(ClayId.FromString(key));
+            SetExplicitId(ClayId.FromString(key));
+            return this;
+        }
+
+        public ElementBuilder Key(ulong key)
+        {
+            if (key == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(key), "A non-zero key is required.");
+            }
+
+            SetExplicitId(key);
             return this;
         }
 
@@ -761,35 +1079,48 @@ public sealed class ClayGui
             return this;
         }
 
-        private void AssignId(ulong elementId)
+        private void SetExplicitId(ulong elementId)
         {
+            var previousId = _assignedId;
             _assignedId = elementId;
+            _identityMode = ElementIdentityMode.Explicit;
             _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
-            _gui.TrackElementId(_assignedId);
+            _gui.ReplaceTrackedElementId(previousId, _assignedId);
             Apply();
         }
 
-        private ulong EnsureInteractionId()
+        private ulong EnsureAutomaticId()
         {
-            if (_assignedId != 0)
+            if (_identityMode == ElementIdentityMode.Explicit && _assignedId != 0)
             {
                 _gui.TrackElementId(_assignedId);
                 return _assignedId;
             }
 
-            AssignId(_gui.AllocateInteractionId());
+            if (_identityMode == ElementIdentityMode.None)
+            {
+                _identityMode = ElementIdentityMode.Automatic;
+                var semanticHash = ComputeAutomaticIdentityHash(in _style);
+                _identityOrdinal = _gui.ClaimAutomaticIdentityOrdinal(semanticHash);
+                var nextId = _gui.ComposeAutomaticIdentity(in _style, _identityOrdinal);
+                var previousId = _assignedId;
+                _assignedId = nextId;
+                _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
+                _gui.ReplaceTrackedElementId(previousId, _assignedId);
+            }
+
+            _gui.TrackElementId(_assignedId);
             return _assignedId;
+        }
+
+        private ulong EnsureInteractionId()
+        {
+            return EnsureAutomaticId();
         }
 
         private void EnsureScrollId()
         {
-            if (_assignedId != 0)
-            {
-                _gui.TrackElementId(_assignedId);
-                return;
-            }
-
-            AssignId(_gui.AllocateScrollId());
+            _ = EnsureAutomaticId();
         }
 
         private void Apply()
@@ -807,9 +1138,12 @@ public sealed class ClayGui
                 resolvedMaxOffset = MathF.Min(resolvedMaxOffset, maxOffset.Value);
             }
 
-            if (_gui.IsHovered(_assignedId) && MathF.Abs(_gui._mouseWheelMove) > 0.001f)
+            var wheelOffset = _gui.IsMouseOver(_assignedId)
+                ? _gui.GetVerticalWheelOffset(step)
+                : 0f;
+            if (MathF.Abs(wheelOffset) > 0.001f)
             {
-                offset -= _gui._mouseWheelMove * step;
+                offset += wheelOffset;
             }
 
             offset = Math.Clamp(offset, 0f, resolvedMaxOffset);
@@ -825,36 +1159,23 @@ public sealed class ClayGui
             EnsureScrollId();
 
             var state = _gui.GetScrollState(_assignedId);
-            var deltaTime = MathF.Max(_gui._frameDeltaTime, 1f / 240f);
             var maxOffset = GetMaxScrollOffset();
 
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, clipContent: true), _style.Box);
 
-            if (_gui.IsHovered(_assignedId) && MathF.Abs(_gui._mouseWheelMove) > 0.001f)
-            {
-                var wheelOffset = -_gui._mouseWheelMove * step;
-                state.Offset += wheelOffset;
-                state.Velocity += wheelOffset * 0.35f / deltaTime;
-            }
+            var wheelOffset = _gui.IsMouseOver(_assignedId)
+                ? _gui.GetVerticalWheelOffset(step)
+                : 0f;
 
-            if (MathF.Abs(state.Velocity) > 0.01f)
-            {
-                state.Offset += state.Velocity * _gui._frameDeltaTime;
-                state.Velocity *= MathF.Exp(-MathF.Max(0f, damping) * _gui._frameDeltaTime);
-            }
+            state.Offset += wheelOffset;
 
             if (maxOffset <= 0f)
             {
                 state.Offset = 0f;
-                state.Velocity = 0f;
             }
             else
             {
                 state.Offset = Math.Clamp(state.Offset, 0f, maxOffset);
-                if (state.Offset <= 0f || state.Offset >= maxOffset)
-                {
-                    state.Velocity = 0f;
-                }
             }
 
             _gui.SetScrollState(_assignedId, state);

@@ -94,9 +94,6 @@ static void Game(ClayGui clui, DemoState state)
 {
     clui.Begin();
 
-    var toastOffsetX = state.ToastVisible ? -8f : 360f;
-    var toastAlpha = state.ToastVisible ? (byte)245 : (byte)0;
-    var toastTextAlpha = state.ToastVisible ? (byte)255 : (byte)0;
     var badgePhase = 0.5f + (0.5f * MathF.Sin((float)Raylib.GetTime() * 2.2f));
     var badgeOffsetY = state.ToastVisible ? 156f : 132f;
     var badgeColor = new ClayColor(
@@ -142,7 +139,6 @@ static void Game(ClayGui clui, DemoState state)
             }
 
             using(clui.Element()
-                .Key("toggle-toast")
                 .Animated(0.18f)
                 .BackgroundColor(new ClayColor(60, 89, 84))
                 .Border(new Thickness(1f), new ClayColor(242, 245, 240))
@@ -196,7 +192,6 @@ static void Game(ClayGui clui, DemoState state)
                     .HorizontalLayout())
                 {
                     using(clui.Element()
-                        .Key("counter-button")
                         .Animated(0.16f)
                         .BackgroundColor(new ClayColor(28, 31, 39))
                         .Border(new Thickness(1f), new ClayColor(239, 239, 235))
@@ -218,14 +213,13 @@ static void Game(ClayGui clui, DemoState state)
                     }
 
                     clui.Text(
-                        "The list below uses ClayGui.ScrollableY with retained momentum and a stable string key instead of a user-managed ref float.",
+                        "The list below uses ClayGui.ScrollableY with retained momentum and automatic semantic identity instead of a user-managed ref float.",
                         new TextElementStyle(
                             new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                             new TextStyle(17f, new ClayColor(84, 74, 62), lineHeight: 24f, wrap: true)));
                 }
 
                 using(clui.Element()
-                    .Key("activity-feed")
                     .BackgroundColor(new ClayColor(247, 242, 234))
                     .Border(new Thickness(1f), new ClayColor(224, 212, 194))
                     .CornerRadius(18f)
@@ -240,7 +234,6 @@ static void Game(ClayGui clui, DemoState state)
                     for (var index = 0; index < 14; index++)
                     {
                         using(clui.Element()
-                            .Key($"panel-{index}")
                             .Animated(0.18f)
                             .Color(index % 2 == 0 ? new ClayColor(255, 252, 247) : new ClayColor(242, 235, 224))
                             .Border(new Thickness(1f), new ClayColor(220, 208, 190))
@@ -293,7 +286,7 @@ static void Game(ClayGui clui, DemoState state)
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
                 clui.Text(
-                    "Use Key(\"name\") when a scroll region, floating panel, or transition should stay stable across reordering. If order never changes, the automatic ids still work for simple interactions.",
+                    "Retained ids are now derived automatically from each element's semantic shape plus invocation order, so animated overlays and scroll regions no longer need string keys in normal usage.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
@@ -302,7 +295,6 @@ static void Game(ClayGui clui, DemoState state)
     }
 
     using(clui.Element()
-        .Key("status-badge")
         .Animated(0.35f)
         .Floating(8)
         .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -36f, badgeOffsetY))
@@ -323,30 +315,32 @@ static void Game(ClayGui clui, DemoState state)
                 new TextStyle(16f, new ClayColor(42, 31, 24), wrap: false)));
     }
 
-    using(clui.Element()
-        .Key("toast-panel")
-        .Animated(0.28f)
-        .Floating(20)
-        .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, toastOffsetX, 84f))
-        .Color(new ClayColor(28, 31, 39, toastAlpha))
-        .Border(new Thickness(1f), new ClayColor(122, 138, 167, toastTextAlpha))
-        .CornerRadius(18f)
-        .OverlayColor(new ClayColor(255, 255, 255, state.ToastVisible ? (byte)18 : (byte)0))
-        .Padding(18f)
-        .Gap(8f)
-        .FitHorizontal(320f)
-        .VerticalLayout())
+    if (state.ToastVisible)
     {
-        clui.Text(
-            "Animated Floating Overlay",
-            new TextElementStyle(
-                ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
-                new TextStyle(20f, new ClayColor(242, 245, 240, toastTextAlpha), wrap: false)));
-        clui.Text(
-            "This panel stays in the tree with a stable key, gets rendered in a separate z-sorted pass, and eases between absolute positions instead of snapping.",
-            new TextElementStyle(
-                new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
-                new TextStyle(16f, new ClayColor(205, 214, 222, toastTextAlpha), lineHeight: 22f, wrap: true)));
+        using(clui.Element()
+            .Animated(0.28f)
+            .Floating(20)
+            .AbsolutePosition(new AbsolutePosition(Alignment.End, Alignment.Start, -8f, 84f))
+            .Color(new ClayColor(28, 31, 39, 245))
+            .Border(new Thickness(1f), new ClayColor(122, 138, 167))
+            .CornerRadius(18f)
+            .OverlayColor(new ClayColor(255, 255, 255, 18))
+            .Padding(18f)
+            .Gap(8f)
+            .FitHorizontal(320f)
+            .VerticalLayout())
+        {
+            clui.Text(
+                "Animated Floating Overlay",
+                new TextElementStyle(
+                    ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
+                    new TextStyle(20f, new ClayColor(242, 245, 240), wrap: false)));
+            clui.Text(
+                "This panel is mounted conditionally. Its enter and exit motion now comes from the retained transition state instead of manual alpha bookkeeping.",
+                new TextElementStyle(
+                    new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
+                    new TextStyle(16f, new ClayColor(205, 214, 222), lineHeight: 22f, wrap: true)));
+        }
     }
 
     clui.End();
@@ -434,7 +428,6 @@ static Color GetCanvasBackground() => new(236, 229, 220, 255);
 static void NiceSummaryCard(ClayGui clui, string title, string value, ClayColor accent)
 {
     using (clui.Element()
-        .Key($"summary-{title.ToLowerInvariant()}")
         .Animated(0.18f)
         .BackgroundColor(new ClayColor(255, 252, 247))
         .Border(new Thickness(1f), new ClayColor(220, 208, 190))

@@ -718,18 +718,15 @@ public sealed class ClayContext : IDisposable
         var bounds = new RectF(node.AbsoluteX, node.AbsoluteY, node.ResolvedWidth, node.ResolvedHeight);
         var contentBounds = bounds.Deflate(node.Style.Layout.Padding);
 
-        if (node.Style.Box.HasOverlay)
+        EmitCommand(new RenderCommand
         {
-            EmitCommand(new RenderCommand
-            {
-                Type = RenderCommandType.OverlayStart,
-                ElementId = node.Style.Id,
-                TransitionId = frame.TransitionId,
-                Bounds = bounds,
-                Color = node.Style.Box.OverlayColor,
-            });
-            frame.OverlayOpened = true;
-        }
+            Type = RenderCommandType.OverlayStart,
+            ElementId = node.Style.Id,
+            TransitionId = frame.TransitionId,
+            Bounds = bounds,
+            Color = node.Style.Box.OverlayColor,
+        });
+        frame.OverlayOpened = true;
 
         if (node.Style.Box.HasBackground)
         {
