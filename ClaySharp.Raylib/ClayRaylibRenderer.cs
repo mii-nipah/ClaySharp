@@ -7,19 +7,24 @@ namespace ClaySharp.Raylib;
 
 public sealed class ClayRaylibRenderer : IDisposable
 {
-    private readonly Func<int, Font> _fontResolver;
+    private readonly Func<int, RaylibFontFace> _fontResolver;
     private readonly Utf8ScratchBuffer _textBuffer;
     private ClayColor[] _overlayStack;
     private RectF[] _scissorStack;
     private int _overlayCount;
     private int _scissorCount;
 
-    public ClayRaylibRenderer(Func<int, Font> fontResolver, int initialOverlayDepth = 16, int initialBufferBytes = 256)
+    public ClayRaylibRenderer(Func<int, RaylibFontFace> fontResolver, int initialOverlayDepth = 16, int initialBufferBytes = 256)
     {
         _fontResolver = fontResolver ?? throw new ArgumentNullException(nameof(fontResolver));
         _textBuffer = new Utf8ScratchBuffer(initialBufferBytes);
         _overlayStack = ArrayPool<ClayColor>.Shared.Rent(Math.Max(initialOverlayDepth, 4));
         _scissorStack = ArrayPool<RectF>.Shared.Rent(Math.Max(initialOverlayDepth, 4));
+    }
+
+    public ClayRaylibRenderer(Func<int, Font> fontResolver, int initialOverlayDepth = 16, int initialBufferBytes = 256)
+        : this(fontId => new RaylibFontFace(fontResolver(fontId)), initialOverlayDepth, initialBufferBytes)
+    {
     }
 
     public void Dispose()
@@ -83,14 +88,29 @@ public sealed class ClayRaylibRenderer : IDisposable
 
         var text = command.Text;
         var color = ToRaylibColor(ApplyOverlay(command.Color));
-        var font = _fontResolver(command.TextStyle.FontId);
+        var fontFace = _fontResolver(command.TextStyle.FontId);
         var fontSize = command.TextStyle.FontSize > 0f ? command.TextStyle.FontSize : 16f;
         var letterSpacing = command.TextStyle.LetterSpacing;
         var position = new Vector2(command.Bounds.X, command.Bounds.Y);
 
         _textBuffer.WithCString(text.Span, ptr =>
         {
-            Raylib_cs.Raylib.DrawTextEx(font, ptr, position, fontSize, letterSpacing, color);
+            if (fontFace.UsesShader)
+            {
+                Raylib_cs.Raylib.BeginShaderMode(fontFace.Shader);
+            }
+
+            try
+            {
+                Raylib_cs.Raylib.DrawTextEx(fontFace.Font, ptr, position, fontSize, letterSpacing, color);
+            }
+            finally
+            {
+                if (fontFace.UsesShader)
+                {
+                    Raylib_cs.Raylib.EndShaderMode();
+                }
+            }
         });
     }
 

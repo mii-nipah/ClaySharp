@@ -3,6 +3,14 @@
         "set": true,
         "dotnet build": true,
         "dotnet test": true,
-        "dotnet run": true
+        "dotnet run": true,
+        "/^dotnet --info \\| head -60$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "command": true,
+        "true": true,
+        "dotnet tool": true,
+        "ilspycmd": true
     }
 }

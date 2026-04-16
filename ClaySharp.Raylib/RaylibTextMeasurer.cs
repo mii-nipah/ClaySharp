@@ -5,13 +5,18 @@ namespace ClaySharp.Raylib;
 
 public sealed class RaylibTextMeasurer : ITextMeasurer, IDisposable
 {
-    private readonly Func<int, Font> _fontResolver;
+    private readonly Func<int, RaylibFontFace> _fontResolver;
     private readonly Utf8ScratchBuffer _buffer;
 
-    public RaylibTextMeasurer(Func<int, Font> fontResolver, int initialBufferBytes = 256)
+    public RaylibTextMeasurer(Func<int, RaylibFontFace> fontResolver, int initialBufferBytes = 256)
     {
         _fontResolver = fontResolver ?? throw new ArgumentNullException(nameof(fontResolver));
         _buffer = new Utf8ScratchBuffer(initialBufferBytes);
+    }
+
+    public RaylibTextMeasurer(Func<int, Font> fontResolver, int initialBufferBytes = 256)
+        : this(fontId => new RaylibFontFace(fontResolver(fontId)), initialBufferBytes)
+    {
     }
 
     public unsafe float MeasureWidth(ReadOnlySpan<char> text, in TextStyle style)
@@ -78,7 +83,7 @@ public sealed class RaylibTextMeasurer : ITextMeasurer, IDisposable
         _buffer.Dispose();
     }
 
-    private Font ResolveFont(int fontId) => _fontResolver(fontId);
+    private Font ResolveFont(int fontId) => _fontResolver(fontId).Font;
 
     private static float EffectiveFontSize(in TextStyle style) => style.FontSize > 0f ? style.FontSize : 16f;
 }

@@ -22,35 +22,52 @@ if (!snapshotMode)
     Raylib.SetTargetFPS(60);
 }
 
-var fontPath = Path.Combine(AppContext.BaseDirectory, "OpenSans-Regular.ttf");
-var useLoadedFont = File.Exists(fontPath);
-var font = useLoadedFont ? Raylib.LoadFontEx(fontPath, 96, null, 0) : Raylib.GetFontDefault();
-Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
-
-using var context = new ClayContext(initialElementCapacity: 512, initialLeafCapacity: 256, initialRenderCommandCapacity: 2048, initialLineCapacity: 1024);
-using var measurer = new RaylibTextMeasurer(_ => font);
-using var renderer = new ClayRaylibRenderer(_ => font);
-
-var state = new DemoState(DefaultMaxScroll);
-
-if (snapshotMode)
 {
-    var viewport = new Vector2(DefaultWindowWidth, DefaultWindowHeight);
-    BuildUi(context, measurer, viewport, state, hoveredId: 0UL);
-    var exportedPath = ExportSnapshot(renderer, context.RenderCommands, snapshotPath!, DefaultWindowWidth, DefaultWindowHeight);
-    Console.WriteLine($"Snapshot exported to {exportedPath}");
-}
-else
-{
-    RunInteractiveLoop(context, measurer, renderer, state);
-}
+    var fontPath = Path.Combine(AppContext.BaseDirectory, "OpenSans-Regular.ttf");
+    using var fontAsset = LoadUiFontAsset(fontPath);
 
-if (useLoadedFont)
-{
-    Raylib.UnloadFont(font);
+    using var context = new ClayContext(initialElementCapacity: 512, initialLeafCapacity: 256, initialRenderCommandCapacity: 2048, initialLineCapacity: 1024);
+    using var measurer = new RaylibTextMeasurer(_ => fontAsset.Face);
+    using var renderer = new ClayRaylibRenderer(_ => fontAsset.Face);
+
+    var state = new DemoState(DefaultMaxScroll);
+
+    if (snapshotMode)
+    {
+        var viewport = new Vector2(DefaultWindowWidth, DefaultWindowHeight);
+        BuildUi(context, measurer, viewport, state, hoveredId: 0UL);
+        var exportedPath = ExportSnapshot(renderer, context.RenderCommands, snapshotPath!, DefaultWindowWidth, DefaultWindowHeight);
+        Console.WriteLine($"Snapshot exported to {exportedPath}");
+    }
+    else
+    {
+        RunInteractiveLoop(context, measurer, renderer, state);
+    }
 }
 
 Raylib.CloseWindow();
+
+static RaylibFontAsset LoadUiFontAsset(string fontPath)
+{
+    if (!File.Exists(fontPath))
+    {
+        return RaylibFontAsset.Wrap(Raylib.GetFontDefault());
+    }
+
+    var codepoints = RaylibFontAsset.CreateCodepointRange(32, 255);
+
+    try
+    {
+        return RaylibFontAsset.LoadSdf(fontPath, 48, codepoints);
+    }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"Falling back to regular font rendering: {exception.Message}");
+        var fallbackFont = Raylib.LoadFontEx(fontPath, 48, codepoints, codepoints.Length);
+        Raylib.SetTextureFilter(fallbackFont.Texture, TextureFilter.Bilinear);
+        return RaylibFontAsset.Wrap(fallbackFont, ownsFont: true);
+    }
+}
 
 static void RunInteractiveLoop(ClayContext context, ITextMeasurer measurer, ClayRaylibRenderer renderer, DemoState state)
 {
