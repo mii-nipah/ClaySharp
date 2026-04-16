@@ -4,6 +4,7 @@ public struct RenderCommand
 {
     public RenderCommandType Type;
     public ulong ElementId;
+    public ulong TransitionId;
     public RectF Bounds;
     public ClayColor Color;
     public Thickness Thickness;

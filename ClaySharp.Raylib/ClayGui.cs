@@ -7,6 +7,8 @@ namespace ClaySharp.Raylib;
 
 public sealed class ClayGui
 {
+    private const float DefaultTransitionDuration = 0.22f;
+    private const int RetainedStateTtlFrames = 180;
     private const ulong FirstInteractionId = 1024UL;
     private const ulong FirstLegacyScrollId = 3UL;
 
@@ -15,6 +17,9 @@ public sealed class ClayGui
     private readonly HashSet<ulong> _trackedElementIds = [];
     private readonly Dictionary<ulong, RectF> _previousBounds = [];
     private readonly Dictionary<ulong, RectF> _previousFlowContentBounds = [];
+    private readonly Dictionary<ulong, ScrollState> _scrollStates = [];
+    private readonly Dictionary<ulong, TransitionState> _transitionStates = [];
+    private readonly Dictionary<ulong, int> _transitionCommandIndices = [];
 
     private Vector2 _viewport;
     private ulong _hoveredElementId;
@@ -22,6 +27,10 @@ public sealed class ClayGui
     private float _mouseWheelMove;
     private ulong _nextInteractionId;
     private bool _legacyScrollAssigned;
+    private float _frameDeltaTime;
+    private int _frameGeneration;
+    private RenderCommand[] _animatedRenderCommands = Array.Empty<RenderCommand>();
+    private int _animatedRenderCommandCount;
 
     public ClayGui(ClayContext context, ITextMeasurer textMeasurer, ClayRaylibRenderer renderer)
     {
@@ -34,7 +43,7 @@ public sealed class ClayGui
 
     public int ElementCount => _context.ElementCount;
 
-    public ReadOnlySpan<RenderCommand> RenderCommands => _context.RenderCommands;
+    public ReadOnlySpan<RenderCommand> RenderCommands => _animatedRenderCommands.AsSpan(0, _animatedRenderCommandCount);
 
     public void SetViewport(Vector2 viewport)
     {
@@ -43,6 +52,9 @@ public sealed class ClayGui
 
     public void Begin()
     {
+        _frameGeneration++;
+        _frameDeltaTime = MathF.Max(0f, RL.GetFrameTime());
+
         var mousePosition = RL.GetMousePosition();
         _hoveredElementId = _context.TryHitTest(mousePosition, out var elementId) ? elementId : 0UL;
         _leftPressed = RL.IsMouseButtonPressed(MouseButton.Left);
@@ -66,6 +78,8 @@ public sealed class ClayGui
     public void End()
     {
         _context.EndLayout();
+        BuildAnimatedRenderCommands();
+        CleanupRetainedState();
     }
 
     public ElementBuilder Element()
@@ -97,7 +111,9 @@ public sealed class ClayGui
         AbsolutePosition? absolutePosition = null,
         float? aspectRatio = null,
         bool? clipContent = null,
-        Vector2? scrollOffset = null)
+        Vector2? scrollOffset = null,
+        int? zIndex = null,
+        bool? transitionEnabled = null)
     {
         return new LayoutConfig(
             axis ?? layout.Axis,
@@ -110,7 +126,9 @@ public sealed class ClayGui
             absolutePosition ?? layout.AbsolutePosition,
             aspectRatio ?? layout.AspectRatio,
             clipContent ?? layout.ClipContent,
-            scrollOffset ?? layout.ScrollOffset);
+                scrollOffset ?? layout.ScrollOffset,
+                zIndex ?? layout.ZIndex,
+                transitionEnabled ?? layout.TransitionEnabled);
     }
 
     private static BoxStyle WithBox(
@@ -181,6 +199,310 @@ public sealed class ClayGui
         return _previousFlowContentBounds.TryGetValue(elementId, out bounds);
     }
 
+    private void RegisterAnimatedElement(ulong elementId, float durationSeconds)
+    {
+        if (elementId == 0)
+        {
+            return;
+        }
+
+        if (!_transitionStates.TryGetValue(elementId, out var state))
+        {
+            state = new TransitionState();
+            _transitionStates[elementId] = state;
+        }
+
+        state.DurationSeconds = durationSeconds > 0f ? durationSeconds : DefaultTransitionDuration;
+        state.LastSeenGeneration = _frameGeneration;
+    }
+
+    private ScrollState GetScrollState(ulong elementId)
+    {
+        return _scrollStates.TryGetValue(elementId, out var state) ? state : default;
+    }
+
+    private void SetScrollState(ulong elementId, ScrollState state)
+    {
+        state.LastSeenGeneration = _frameGeneration;
+        _scrollStates[elementId] = state;
+    }
+
+    private void BuildAnimatedRenderCommands()
+    {
+        var commands = _context.RenderCommands;
+        EnsureAnimatedCommandCapacity(commands.Length);
+        _animatedRenderCommandCount = 0;
+        _transitionCommandIndices.Clear();
+
+        foreach (ref readonly var command in commands)
+        {
+            var output = command;
+            if (command.TransitionId != 0)
+            {
+                output = ApplyTransition(command);
+            }
+
+            _animatedRenderCommands[_animatedRenderCommandCount++] = output;
+        }
+
+        foreach (var pair in _transitionCommandIndices)
+        {
+            if (_transitionStates.TryGetValue(pair.Key, out var state))
+            {
+                state.Count = pair.Value;
+            }
+        }
+    }
+
+    private RenderCommand ApplyTransition(in RenderCommand target)
+    {
+        if (!_transitionStates.TryGetValue(target.TransitionId, out var state))
+        {
+            state = new TransitionState { DurationSeconds = DefaultTransitionDuration, LastSeenGeneration = _frameGeneration };
+            _transitionStates[target.TransitionId] = state;
+        }
+
+        state.LastSeenGeneration = _frameGeneration;
+
+        var nextIndex = _transitionCommandIndices.TryGetValue(target.TransitionId, out var currentIndex)
+            ? currentIndex
+            : 0;
+        _transitionCommandIndices[target.TransitionId] = nextIndex + 1;
+
+        state.EnsureCapacity(nextIndex + 1);
+        if (nextIndex >= state.Count || !CanInterpolate(state.Commands[nextIndex], target))
+        {
+            state.Commands[nextIndex] = target;
+            return target;
+        }
+
+        var factor = ComputeTransitionFactor(state.DurationSeconds);
+        var blended = InterpolateCommand(state.Commands[nextIndex], target, factor);
+        state.Commands[nextIndex] = blended;
+        return blended;
+    }
+
+    private float ComputeTransitionFactor(float durationSeconds)
+    {
+        if (durationSeconds <= 0f || _frameDeltaTime <= 0f)
+        {
+            return 1f;
+        }
+
+        return 1f - MathF.Exp(-_frameDeltaTime * (5f / durationSeconds));
+    }
+
+    private static bool CanInterpolate(in RenderCommand previous, in RenderCommand target)
+    {
+        return previous.Type == target.Type;
+    }
+
+    private static RenderCommand InterpolateCommand(in RenderCommand previous, in RenderCommand target, float factor)
+    {
+        if (factor >= 0.999f)
+        {
+            return target;
+        }
+
+        return new RenderCommand
+        {
+            Type = target.Type,
+            ElementId = target.ElementId,
+            TransitionId = target.TransitionId,
+            Bounds = Lerp(previous.Bounds, target.Bounds, factor),
+            Color = Lerp(previous.Color, target.Color, factor),
+            Thickness = Lerp(previous.Thickness, target.Thickness, factor),
+            CornerRadius = Lerp(previous.CornerRadius, target.CornerRadius, factor),
+            Text = target.Text,
+            TextStyle = Lerp(previous.TextStyle, target.TextStyle, factor),
+            SourceRegion = Lerp(previous.SourceRegion, target.SourceRegion, factor),
+            UseSourceRegion = target.UseSourceRegion,
+            Payload = target.Payload,
+        };
+    }
+
+    private void CleanupRetainedState()
+    {
+        CleanupScrollStates();
+        CleanupTransitionStates();
+    }
+
+    private void CleanupScrollStates()
+    {
+        if (_scrollStates.Count == 0)
+        {
+            return;
+        }
+
+        Span<ulong> toRemove = stackalloc ulong[Math.Min(_scrollStates.Count, 32)];
+        List<ulong>? overflow = null;
+        var removeCount = 0;
+
+        foreach (var pair in _scrollStates)
+        {
+            if (_frameGeneration - pair.Value.LastSeenGeneration <= RetainedStateTtlFrames)
+            {
+                continue;
+            }
+
+            if (removeCount < toRemove.Length)
+            {
+                toRemove[removeCount++] = pair.Key;
+            }
+            else
+            {
+                overflow ??= [];
+                overflow.Add(pair.Key);
+            }
+        }
+
+        for (var index = 0; index < removeCount; index++)
+        {
+            _scrollStates.Remove(toRemove[index]);
+        }
+
+        if (overflow is not null)
+        {
+            foreach (var key in overflow)
+            {
+                _scrollStates.Remove(key);
+            }
+        }
+    }
+
+    private void CleanupTransitionStates()
+    {
+        if (_transitionStates.Count == 0)
+        {
+            return;
+        }
+
+        Span<ulong> toRemove = stackalloc ulong[Math.Min(_transitionStates.Count, 32)];
+        List<ulong>? overflow = null;
+        var removeCount = 0;
+
+        foreach (var pair in _transitionStates)
+        {
+            if (_frameGeneration - pair.Value.LastSeenGeneration <= RetainedStateTtlFrames)
+            {
+                continue;
+            }
+
+            if (removeCount < toRemove.Length)
+            {
+                toRemove[removeCount++] = pair.Key;
+            }
+            else
+            {
+                overflow ??= [];
+                overflow.Add(pair.Key);
+            }
+        }
+
+        for (var index = 0; index < removeCount; index++)
+        {
+            _transitionStates.Remove(toRemove[index]);
+        }
+
+        if (overflow is not null)
+        {
+            foreach (var key in overflow)
+            {
+                _transitionStates.Remove(key);
+            }
+        }
+    }
+
+    private void EnsureAnimatedCommandCapacity(int required)
+    {
+        if (_animatedRenderCommands.Length >= required)
+        {
+            return;
+        }
+
+        Array.Resize(ref _animatedRenderCommands, Math.Max(required, Math.Max(_animatedRenderCommands.Length * 2, 8)));
+    }
+
+    private static RectF Lerp(in RectF from, in RectF to, float factor)
+    {
+        return new RectF(
+            Lerp(from.X, to.X, factor),
+            Lerp(from.Y, to.Y, factor),
+            Lerp(from.Width, to.Width, factor),
+            Lerp(from.Height, to.Height, factor));
+    }
+
+    private static Thickness Lerp(in Thickness from, in Thickness to, float factor)
+    {
+        return new Thickness(
+            Lerp(from.Left, to.Left, factor),
+            Lerp(from.Top, to.Top, factor),
+            Lerp(from.Right, to.Right, factor),
+            Lerp(from.Bottom, to.Bottom, factor));
+    }
+
+    private static CornerRadius Lerp(in CornerRadius from, in CornerRadius to, float factor)
+    {
+        return new CornerRadius(
+            Lerp(from.TopLeft, to.TopLeft, factor),
+            Lerp(from.TopRight, to.TopRight, factor),
+            Lerp(from.BottomRight, to.BottomRight, factor),
+            Lerp(from.BottomLeft, to.BottomLeft, factor));
+    }
+
+    private static ClayColor Lerp(ClayColor from, ClayColor to, float factor)
+    {
+        return new ClayColor(
+            LerpByte(from.R, to.R, factor),
+            LerpByte(from.G, to.G, factor),
+            LerpByte(from.B, to.B, factor),
+            LerpByte(from.A, to.A, factor));
+    }
+
+    private static TextStyle Lerp(in TextStyle from, in TextStyle to, float factor)
+    {
+        return new TextStyle(
+            Lerp(from.FontSize, to.FontSize, factor),
+            Lerp(from.Color, to.Color, factor),
+            to.FontId,
+            Lerp(from.LetterSpacing, to.LetterSpacing, factor),
+            Lerp(from.LineHeight, to.LineHeight, factor),
+            to.HorizontalAlignment,
+            to.Wrap);
+    }
+
+    private static float Lerp(float from, float to, float factor) => from + ((to - from) * factor);
+
+    private static byte LerpByte(byte from, byte to, float factor)
+    {
+        return (byte)Math.Clamp(MathF.Round(Lerp(from, to, factor)), 0f, 255f);
+    }
+
+    private sealed class TransitionState
+    {
+        public RenderCommand[] Commands = Array.Empty<RenderCommand>();
+        public int Count;
+        public float DurationSeconds = DefaultTransitionDuration;
+        public int LastSeenGeneration;
+
+        public void EnsureCapacity(int required)
+        {
+            if (Commands.Length >= required)
+            {
+                return;
+            }
+
+            Array.Resize(ref Commands, Math.Max(required, Math.Max(Commands.Length * 2, 4)));
+        }
+    }
+
+    private struct ScrollState
+    {
+        public float Offset;
+        public float Velocity;
+        public int LastSeenGeneration;
+    }
+
     public struct ElementBuilder : IDisposable
     {
         private readonly ClayGui _gui;
@@ -235,6 +557,17 @@ public sealed class ClayGui
         {
             _style = new ElementStyle(_style.Id, _style.Layout, WithBox(_style.Box, cornerRadius: new CornerRadius(radius)));
             Apply();
+            return this;
+        }
+
+        public ElementBuilder Key(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                throw new ArgumentException("A stable key is required.", nameof(key));
+            }
+
+            AssignId(ClayId.FromString(key));
             return this;
         }
 
@@ -316,6 +649,29 @@ public sealed class ClayGui
             return this;
         }
 
+        public ElementBuilder ZIndex(int zIndex)
+        {
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, zIndex: zIndex), _style.Box);
+            Apply();
+            return this;
+        }
+
+        public ElementBuilder Floating(int zIndex = 1)
+        {
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, positionMode: ClaySharp.PositionMode.Absolute, zIndex: zIndex), _style.Box);
+            Apply();
+            return this;
+        }
+
+        public ElementBuilder Animated(float durationSeconds = DefaultTransitionDuration)
+        {
+            var elementId = EnsureInteractionId();
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, transitionEnabled: true), _style.Box);
+            Apply();
+            _gui.RegisterAnimatedElement(elementId, durationSeconds);
+            return this;
+        }
+
         public ElementBuilder CrossAlignment(Alignment alignment)
         {
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, crossAlignment: alignment), _style.Box);
@@ -374,6 +730,16 @@ public sealed class ClayGui
             return ScrollYCore(ref offset, MathF.Max(0f, maxOffset), step);
         }
 
+        public ElementBuilder ScrollableY(float step = 56f, float damping = 14f)
+        {
+            return ScrollableYCore(out _, step, damping);
+        }
+
+        public ElementBuilder ScrollableY(out float offset, float step = 56f, float damping = 14f)
+        {
+            return ScrollableYCore(out offset, step, damping);
+        }
+
         public ElementBuilder PositionMode(PositionMode mode)
         {
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, positionMode: mode), _style.Box);
@@ -395,6 +761,14 @@ public sealed class ClayGui
             return this;
         }
 
+        private void AssignId(ulong elementId)
+        {
+            _assignedId = elementId;
+            _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
+            _gui.TrackElementId(_assignedId);
+            Apply();
+        }
+
         private ulong EnsureInteractionId()
         {
             if (_assignedId != 0)
@@ -403,10 +777,7 @@ public sealed class ClayGui
                 return _assignedId;
             }
 
-            _assignedId = _gui.AllocateInteractionId();
-            _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
-            _gui.TrackElementId(_assignedId);
-            Apply();
+            AssignId(_gui.AllocateInteractionId());
             return _assignedId;
         }
 
@@ -418,10 +789,7 @@ public sealed class ClayGui
                 return;
             }
 
-            _assignedId = _gui.AllocateScrollId();
-            _style = new ElementStyle(_assignedId, _style.Layout, _style.Box);
-            _gui.TrackElementId(_assignedId);
-            Apply();
+            AssignId(_gui.AllocateScrollId());
         }
 
         private void Apply()
@@ -448,6 +816,52 @@ public sealed class ClayGui
 
             var scrollOffset = new Vector2(_style.Layout.ScrollOffset.X, offset);
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, scrollOffset: scrollOffset), _style.Box);
+            Apply();
+            return this;
+        }
+
+        private ElementBuilder ScrollableYCore(out float offset, float step, float damping)
+        {
+            EnsureScrollId();
+
+            var state = _gui.GetScrollState(_assignedId);
+            var deltaTime = MathF.Max(_gui._frameDeltaTime, 1f / 240f);
+            var maxOffset = GetMaxScrollOffset();
+
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, clipContent: true), _style.Box);
+
+            if (_gui.IsHovered(_assignedId) && MathF.Abs(_gui._mouseWheelMove) > 0.001f)
+            {
+                var wheelOffset = -_gui._mouseWheelMove * step;
+                state.Offset += wheelOffset;
+                state.Velocity += wheelOffset * 0.35f / deltaTime;
+            }
+
+            if (MathF.Abs(state.Velocity) > 0.01f)
+            {
+                state.Offset += state.Velocity * _gui._frameDeltaTime;
+                state.Velocity *= MathF.Exp(-MathF.Max(0f, damping) * _gui._frameDeltaTime);
+            }
+
+            if (maxOffset <= 0f)
+            {
+                state.Offset = 0f;
+                state.Velocity = 0f;
+            }
+            else
+            {
+                state.Offset = Math.Clamp(state.Offset, 0f, maxOffset);
+                if (state.Offset <= 0f || state.Offset >= maxOffset)
+                {
+                    state.Velocity = 0f;
+                }
+            }
+
+            _gui.SetScrollState(_assignedId, state);
+            offset = state.Offset;
+
+            var scrollOffset = new Vector2(_style.Layout.ScrollOffset.X, state.Offset);
+            _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, scrollOffset: scrollOffset, clipContent: true), _style.Box);
             Apply();
             return this;
         }

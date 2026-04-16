@@ -215,6 +215,130 @@ public sealed class LayoutEngineTests
         Assert.Equal(75f, contentBounds.Height, 2);
     }
 
+    [Fact]
+    public void FloatingAbsoluteChildren_RenderAndHitTestByZIndexInsteadOfInsertionOrder()
+    {
+        using var context = new ClayContext();
+        var measurer = new MonospaceTextMeasurer();
+
+        context.BeginLayout(new Vector2(300f, 200f), measurer);
+        using (context.Element(new ElementStyle(layout: new LayoutConfig(sizing: ElementSizing.Fixed(200f, 150f)))))
+        {
+            context.Box(new ElementStyle(70, new LayoutConfig(sizing: ElementSizing.Fixed(90f, 90f)), new BoxStyle(new ClayColor(210, 210, 210))));
+            context.Box(new ElementStyle(
+                71,
+                new LayoutConfig(
+                    sizing: ElementSizing.Fixed(90f, 90f),
+                    positionMode: PositionMode.Absolute,
+                    absolutePosition: new AbsolutePosition(Alignment.Start, Alignment.Start),
+                    zIndex: 10),
+                new BoxStyle(new ClayColor(180, 120, 120))));
+            context.Box(new ElementStyle(
+                72,
+                new LayoutConfig(
+                    sizing: ElementSizing.Fixed(90f, 90f),
+                    positionMode: PositionMode.Absolute,
+                    absolutePosition: new AbsolutePosition(Alignment.Start, Alignment.Start),
+                    zIndex: 5),
+                new BoxStyle(new ClayColor(120, 120, 180))));
+        }
+
+        context.EndLayout();
+
+        Span<ulong> rectangleIds = stackalloc ulong[3];
+        var rectangleCount = 0;
+        foreach (var command in context.RenderCommands)
+        {
+            if (command.Type != RenderCommandType.Rectangle)
+            {
+                continue;
+            }
+
+            rectangleIds[rectangleCount++] = command.ElementId;
+        }
+
+        Assert.Equal(3, rectangleCount);
+        Assert.Equal(70UL, rectangleIds[0]);
+        Assert.Equal(72UL, rectangleIds[1]);
+        Assert.Equal(71UL, rectangleIds[2]);
+
+        Assert.True(context.TryHitTest(new Vector2(10f, 10f), out var hitId));
+        Assert.Equal(71UL, hitId);
+    }
+
+    [Fact]
+    public void FloatingAbsoluteChildren_DoNotInheritParentScrollOffset()
+    {
+        using var context = new ClayContext();
+        var measurer = new MonospaceTextMeasurer();
+
+        context.BeginLayout(new Vector2(300f, 200f), measurer);
+        using (context.Element(new ElementStyle(
+            layout: new LayoutConfig(
+                sizing: ElementSizing.Fixed(140f, 100f),
+                padding: new Thickness(12f),
+                clipContent: true,
+                scrollOffset: new Vector2(0f, 30f)))))
+        {
+            context.Box(new ElementStyle(
+                80,
+                new LayoutConfig(
+                    sizing: ElementSizing.Fixed(60f, 24f),
+                    positionMode: PositionMode.Absolute,
+                    absolutePosition: new AbsolutePosition(Alignment.Start, Alignment.Start),
+                    zIndex: 1),
+                new BoxStyle(new ClayColor(180, 180, 220))));
+        }
+
+        context.EndLayout();
+
+        Assert.True(context.TryGetBounds(80, out var bounds));
+        Assert.Equal(12f, bounds.X, 2);
+        Assert.Equal(12f, bounds.Y, 2);
+    }
+
+    [Fact]
+    public void TransitionEnabled_PropagatesOwnerIdToDescendantCommands()
+    {
+        using var context = new ClayContext();
+        var measurer = new MonospaceTextMeasurer();
+
+        context.BeginLayout(new Vector2(200f, 120f), measurer);
+        using (context.Element(new ElementStyle(
+            90,
+            new LayoutConfig(sizing: ElementSizing.Fixed(120f, 60f), transitionEnabled: true),
+            new BoxStyle(new ClayColor(220, 220, 220)))))
+        {
+            context.Text(
+                "transition",
+                new TextElementStyle(
+                    new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit()))),
+                    new TextStyle(16f, ClayColor.Black, wrap: false)));
+        }
+
+        context.EndLayout();
+
+        var sawRectangle = false;
+        var sawText = false;
+        foreach (var command in context.RenderCommands)
+        {
+            if (command.Type == RenderCommandType.Rectangle && command.ElementId == 90)
+            {
+                sawRectangle = true;
+                Assert.Equal(90UL, command.TransitionId);
+            }
+
+            if (command.Type == RenderCommandType.Text)
+            {
+                sawText = true;
+                Assert.Equal(90UL, command.TransitionId);
+            }
+        }
+
+        Assert.True(sawRectangle);
+        Assert.True(sawText);
+    }
+
     private sealed class MonospaceTextMeasurer : ITextMeasurer
     {
         public float MeasureWidth(ReadOnlySpan<char> text, in TextStyle style) => text.Length * 10f;

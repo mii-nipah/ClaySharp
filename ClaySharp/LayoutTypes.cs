@@ -103,7 +103,9 @@ public readonly struct LayoutConfig
         AbsolutePosition absolutePosition = default,
         float aspectRatio = 0f,
         bool clipContent = false,
-        Vector2 scrollOffset = default)
+        Vector2 scrollOffset = default,
+        int zIndex = 0,
+        bool transitionEnabled = false)
     {
         Axis = axis;
         Sizing = sizing.Width.Mode == 0 && sizing.Height.Mode == 0 && sizing.Width.Value == 0f && sizing.Height.Value == 0f
@@ -118,6 +120,8 @@ public readonly struct LayoutConfig
         AspectRatio = aspectRatio;
         ClipContent = clipContent;
         ScrollOffset = scrollOffset;
+        ZIndex = zIndex;
+        TransitionEnabled = transitionEnabled;
     }
 
     public LayoutAxis Axis { get; }
@@ -142,6 +146,10 @@ public readonly struct LayoutConfig
 
     public Vector2 ScrollOffset { get; }
 
+    public int ZIndex { get; }
+
+    public bool TransitionEnabled { get; }
+
     public LayoutConfig WithAspectRatio(float aspectRatio)
     {
         return new LayoutConfig(
@@ -155,7 +163,9 @@ public readonly struct LayoutConfig
             AbsolutePosition,
             aspectRatio,
             ClipContent,
-            ScrollOffset);
+            ScrollOffset,
+            ZIndex,
+            TransitionEnabled);
     }
 }
 

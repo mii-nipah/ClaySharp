@@ -16,6 +16,7 @@ public sealed class ClayContext : IDisposable
     private RenderCommand[] _renderCommands;
     private int[] _openElementStack;
     private int[] _childScratch;
+    private int[] _floatingRootScratch;
     private TraversalFrame[] _traversalStack;
 
     private int _nodeCount;
@@ -25,6 +26,7 @@ public sealed class ClayContext : IDisposable
     private int _wrappedTextLineCount;
     private int _renderCommandCount;
     private int _openElementCount;
+    private int _floatingRootCount;
     private bool _isBuilding;
     private Vector2 _viewportSize;
     private ITextMeasurer? _textMeasurer;
@@ -43,6 +45,7 @@ public sealed class ClayContext : IDisposable
         _renderCommands = ArrayPool<RenderCommand>.Shared.Rent(Math.Max(initialRenderCommandCapacity, 8));
         _openElementStack = ArrayPool<int>.Shared.Rent(Math.Max(initialElementCapacity, 8));
         _childScratch = ArrayPool<int>.Shared.Rent(Math.Max(initialElementCapacity, 8));
+        _floatingRootScratch = ArrayPool<int>.Shared.Rent(Math.Max(initialElementCapacity, 8));
         _traversalStack = ArrayPool<TraversalFrame>.Shared.Rent(Math.Max(initialElementCapacity, 8));
     }
 
@@ -60,6 +63,7 @@ public sealed class ClayContext : IDisposable
         Return(_renderCommands);
         Return(_openElementStack);
         Return(_childScratch);
+        Return(_floatingRootScratch);
         Return(_traversalStack);
     }
 
@@ -81,6 +85,7 @@ public sealed class ClayContext : IDisposable
         _wrappedTextLineCount = 0;
         _renderCommandCount = 0;
         _openElementCount = 0;
+        _floatingRootCount = 0;
         _isBuilding = true;
 
         EnsureNodeCapacity(1);
@@ -257,20 +262,64 @@ public sealed class ClayContext : IDisposable
 
     public bool TryHitTest(Vector2 point, out ulong elementId)
     {
+        for (var rootIndex = _floatingRootCount - 1; rootIndex >= 0; rootIndex--)
+        {
+            if (TryHitTestInSubtree(_floatingRootScratch[rootIndex], point, out elementId))
+            {
+                return true;
+            }
+        }
+
         for (var index = _nodeCount - 1; index >= 1; index--)
         {
-            ref readonly var node = ref _nodes[index];
-            if (node.Style.Id == 0)
+            if (FindFloatingRootAncestor(index) >= 0)
             {
                 continue;
             }
 
-            var bounds = new RectF(node.AbsoluteX, node.AbsoluteY, node.ResolvedWidth, node.ResolvedHeight);
-            if (bounds.Contains(point))
+            if (TryHitTestNode(index, point, out elementId))
             {
-                elementId = node.Style.Id;
                 return true;
             }
+        }
+
+        elementId = 0;
+        return false;
+    }
+
+    private bool TryHitTestInSubtree(int subtreeRootIndex, Vector2 point, out ulong elementId)
+    {
+        for (var index = _nodeCount - 1; index >= subtreeRootIndex; index--)
+        {
+            if (!IsDescendantOfOrSelf(index, subtreeRootIndex))
+            {
+                continue;
+            }
+
+            if (TryHitTestNode(index, point, out elementId))
+            {
+                return true;
+            }
+        }
+
+        elementId = 0;
+        return false;
+    }
+
+    private bool TryHitTestNode(int nodeIndex, Vector2 point, out ulong elementId)
+    {
+        ref readonly var node = ref _nodes[nodeIndex];
+        if (node.Style.Id == 0)
+        {
+            elementId = 0;
+            return false;
+        }
+
+        var bounds = new RectF(node.AbsoluteX, node.AbsoluteY, node.ResolvedWidth, node.ResolvedHeight);
+        if (bounds.Contains(point))
+        {
+            elementId = node.Style.Id;
+            return true;
         }
 
         elementId = 0;
@@ -539,6 +588,8 @@ public sealed class ClayContext : IDisposable
         var flowCount = CollectFlowChildren(parentIndex, children);
         var availableWidth = MathF.Max(0f, parent.ResolvedWidth - parent.Style.Layout.Padding.Horizontal);
         var availableHeight = MathF.Max(0f, parent.ResolvedHeight - parent.Style.Layout.Padding.Vertical);
+        var unscrolledOriginX = parent.AbsoluteX + parent.Style.Layout.Padding.Left;
+        var unscrolledOriginY = parent.AbsoluteY + parent.Style.Layout.Padding.Top;
         var contentOriginX = parent.AbsoluteX + parent.Style.Layout.Padding.Left - parent.Style.Layout.ScrollOffset.X;
         var contentOriginY = parent.AbsoluteY + parent.Style.Layout.Padding.Top - parent.Style.Layout.ScrollOffset.Y;
 
@@ -582,10 +633,13 @@ public sealed class ClayContext : IDisposable
                 continue;
             }
 
-            child.AbsoluteX = contentOriginX
+            var absoluteOriginX = IsFloatingNode(childIndex) ? unscrolledOriginX : contentOriginX;
+            var absoluteOriginY = IsFloatingNode(childIndex) ? unscrolledOriginY : contentOriginY;
+
+            child.AbsoluteX = absoluteOriginX
                 + GetAlignmentOffset(child.Style.Layout.AbsolutePosition.HorizontalAnchor, availableWidth - child.ResolvedWidth)
                 + child.Style.Layout.AbsolutePosition.OffsetX;
-            child.AbsoluteY = contentOriginY
+            child.AbsoluteY = absoluteOriginY
                 + GetAlignmentOffset(child.Style.Layout.AbsolutePosition.VerticalAnchor, availableHeight - child.ResolvedHeight)
                 + child.Style.Layout.AbsolutePosition.OffsetY;
         }
@@ -594,8 +648,26 @@ public sealed class ClayContext : IDisposable
     private void EmitRenderCommands()
     {
         _renderCommandCount = 0;
+        CollectFloatingRoots();
+        EmitSubtree(0, skipFloatingRoots: true);
+
+        for (var index = 0; index < _floatingRootCount; index++)
+        {
+            EmitSubtree(_floatingRootScratch[index], skipFloatingRoots: false);
+        }
+    }
+
+    private void EmitSubtree(int rootIndex, bool skipFloatingRoots)
+    {
         EnsureTraversalCapacity(_nodeCount);
-        _traversalStack[0] = new TraversalFrame { NodeIndex = 0, NextChildIndex = -1, Entered = false };
+        _traversalStack[0] = new TraversalFrame
+        {
+            NodeIndex = rootIndex,
+            NextChildIndex = -1,
+            Entered = false,
+            TransitionId = 0,
+            SkipFloatingRoots = skipFloatingRoots,
+        };
         var stackCount = 1;
 
         while (stackCount > 0)
@@ -604,6 +676,7 @@ public sealed class ClayContext : IDisposable
             if (!frame.Entered)
             {
                 frame.Entered = true;
+                frame.TransitionId = ResolveTransitionId(frame.NodeIndex, frame.TransitionId);
                 frame.NextChildIndex = _nodes[frame.NodeIndex].FirstChildIndex;
                 EmitNodeStart(frame.NodeIndex, ref frame);
                 continue;
@@ -613,7 +686,19 @@ public sealed class ClayContext : IDisposable
             {
                 var child = frame.NextChildIndex;
                 frame.NextChildIndex = _nodes[child].NextSiblingIndex;
-                _traversalStack[stackCount++] = new TraversalFrame { NodeIndex = child, NextChildIndex = -1, Entered = false };
+                if (frame.SkipFloatingRoots && IsFloatingRoot(child))
+                {
+                    continue;
+                }
+
+                _traversalStack[stackCount++] = new TraversalFrame
+                {
+                    NodeIndex = child,
+                    NextChildIndex = -1,
+                    Entered = false,
+                    TransitionId = frame.TransitionId,
+                    SkipFloatingRoots = frame.SkipFloatingRoots,
+                };
                 continue;
             }
 
@@ -639,6 +724,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.OverlayStart,
                 ElementId = node.Style.Id,
+                TransitionId = frame.TransitionId,
                 Bounds = bounds,
                 Color = node.Style.Box.OverlayColor,
             });
@@ -651,6 +737,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.Rectangle,
                 ElementId = node.Style.Id,
+                TransitionId = frame.TransitionId,
                 Bounds = bounds,
                 Color = node.Style.Box.BackgroundColor,
                 CornerRadius = node.Style.Box.CornerRadius,
@@ -663,6 +750,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.Border,
                 ElementId = node.Style.Id,
+                TransitionId = frame.TransitionId,
                 Bounds = bounds,
                 Color = node.Style.Box.Border.Color,
                 Thickness = node.Style.Box.Border.Widths,
@@ -676,6 +764,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.ScissorStart,
                 ElementId = node.Style.Id,
+                TransitionId = frame.TransitionId,
                 Bounds = contentBounds,
             });
             frame.ScissorOpened = true;
@@ -684,13 +773,13 @@ public sealed class ClayContext : IDisposable
         switch (node.Kind)
         {
             case ElementKind.Text:
-                EmitTextCommands(nodeIndex, contentBounds);
+                EmitTextCommands(nodeIndex, contentBounds, frame.TransitionId);
                 break;
             case ElementKind.Image:
-                EmitImageCommand(nodeIndex, contentBounds);
+                EmitImageCommand(nodeIndex, contentBounds, frame.TransitionId);
                 break;
             case ElementKind.Custom:
-                EmitCustomCommand(nodeIndex, contentBounds);
+                EmitCustomCommand(nodeIndex, contentBounds, frame.TransitionId);
                 break;
         }
     }
@@ -708,6 +797,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.ScissorEnd,
                 ElementId = _nodes[nodeIndex].Style.Id,
+                TransitionId = frame.TransitionId,
             });
         }
 
@@ -717,11 +807,12 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.OverlayEnd,
                 ElementId = _nodes[nodeIndex].Style.Id,
+                TransitionId = frame.TransitionId,
             });
         }
     }
 
-    private void EmitTextCommands(int nodeIndex, RectF contentBounds)
+    private void EmitTextCommands(int nodeIndex, RectF contentBounds, ulong transitionId)
     {
         var measurer = RequireTextMeasurer();
         ref readonly var node = ref _nodes[nodeIndex];
@@ -742,6 +833,7 @@ public sealed class ClayContext : IDisposable
             {
                 Type = RenderCommandType.Text,
                 ElementId = node.Style.Id,
+                TransitionId = transitionId,
                 Bounds = new RectF(drawX, drawY, line.Width, lineHeight),
                 Color = textNode.Style.Color,
                 Text = new TextSlice(textNode.Text, line.Start, line.Length),
@@ -750,7 +842,7 @@ public sealed class ClayContext : IDisposable
         }
     }
 
-    private void EmitImageCommand(int nodeIndex, RectF contentBounds)
+    private void EmitImageCommand(int nodeIndex, RectF contentBounds, ulong transitionId)
     {
         ref readonly var node = ref _nodes[nodeIndex];
         ref readonly var imageNode = ref _imageNodes[node.DataIndex];
@@ -758,6 +850,7 @@ public sealed class ClayContext : IDisposable
         {
             Type = RenderCommandType.Image,
             ElementId = node.Style.Id,
+            TransitionId = transitionId,
             Bounds = contentBounds,
             Color = imageNode.Tint,
             Payload = imageNode.Source,
@@ -766,7 +859,7 @@ public sealed class ClayContext : IDisposable
         });
     }
 
-    private void EmitCustomCommand(int nodeIndex, RectF contentBounds)
+    private void EmitCustomCommand(int nodeIndex, RectF contentBounds, ulong transitionId)
     {
         ref readonly var node = ref _nodes[nodeIndex];
         ref readonly var customNode = ref _customNodes[node.DataIndex];
@@ -774,9 +867,110 @@ public sealed class ClayContext : IDisposable
         {
             Type = RenderCommandType.Custom,
             ElementId = node.Style.Id,
+            TransitionId = transitionId,
             Bounds = contentBounds,
             Payload = customNode.Payload,
         });
+    }
+
+    private void CollectFloatingRoots()
+    {
+        _floatingRootCount = 0;
+        EnsureFloatingRootCapacity(_nodeCount);
+
+        for (var index = 1; index < _nodeCount; index++)
+        {
+            if (!IsFloatingRoot(index))
+            {
+                continue;
+            }
+
+            _floatingRootScratch[_floatingRootCount++] = index;
+        }
+
+        for (var index = 1; index < _floatingRootCount; index++)
+        {
+            var candidate = _floatingRootScratch[index];
+            var candidateZ = _nodes[candidate].Style.Layout.ZIndex;
+            var insertion = index - 1;
+            while (insertion >= 0)
+            {
+                var current = _floatingRootScratch[insertion];
+                var currentZ = _nodes[current].Style.Layout.ZIndex;
+                if (candidateZ > currentZ || (candidateZ == currentZ && candidate >= current))
+                {
+                    break;
+                }
+
+                _floatingRootScratch[insertion + 1] = current;
+                insertion--;
+            }
+
+            _floatingRootScratch[insertion + 1] = candidate;
+        }
+    }
+
+    private bool IsFloatingNode(int nodeIndex)
+    {
+        return nodeIndex > 0
+            && _nodes[nodeIndex].Style.Layout.PositionMode == PositionMode.Absolute
+            && _nodes[nodeIndex].Style.Layout.ZIndex != 0;
+    }
+
+    private bool IsFloatingRoot(int nodeIndex)
+    {
+        if (!IsFloatingNode(nodeIndex))
+        {
+            return false;
+        }
+
+        var parentIndex = _nodes[nodeIndex].ParentIndex;
+        return parentIndex <= 0 || !IsFloatingNode(parentIndex);
+    }
+
+    private int FindFloatingRootAncestor(int nodeIndex)
+    {
+        var current = nodeIndex;
+        while (current > 0)
+        {
+            if (IsFloatingRoot(current))
+            {
+                return current;
+            }
+
+            current = _nodes[current].ParentIndex;
+        }
+
+        return -1;
+    }
+
+    private bool IsDescendantOfOrSelf(int nodeIndex, int ancestorIndex)
+    {
+        var current = nodeIndex;
+        while (current >= 0)
+        {
+            if (current == ancestorIndex)
+            {
+                return true;
+            }
+
+            current = _nodes[current].ParentIndex;
+        }
+
+        return false;
+    }
+
+    private ulong ResolveTransitionId(int nodeIndex, ulong inheritedId)
+    {
+        if (nodeIndex <= 0)
+        {
+            return inheritedId;
+        }
+
+        ref readonly var node = ref _nodes[nodeIndex];
+        return node.Style.Layout.TransitionEnabled && node.Style.Id != 0
+            ? node.Style.Id
+            : inheritedId;
     }
 
     private void WrapParagraph(int nodeIndex, string text, int start, int length, float maxWidth, in TextStyle style)
@@ -1396,6 +1590,16 @@ public sealed class ClayContext : IDisposable
         Resize(ref _childScratch, required);
     }
 
+    private void EnsureFloatingRootCapacity(int required)
+    {
+        if (_floatingRootScratch.Length >= required)
+        {
+            return;
+        }
+
+        Resize(ref _floatingRootScratch, required);
+    }
+
     private void EnsureTraversalCapacity(int required)
     {
         if (_traversalStack.Length >= required)
@@ -1568,9 +1772,11 @@ public sealed class ClayContext : IDisposable
     {
         public int NodeIndex;
         public int NextChildIndex;
+        public ulong TransitionId;
         public bool Entered;
         public bool ScissorOpened;
         public bool OverlayOpened;
+        public bool SkipFloatingRoots;
     }
 
     public ref struct ElementScope
