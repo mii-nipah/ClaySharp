@@ -62,6 +62,8 @@ public readonly struct ElementSizing
 
     public SizeSpec Height { get; }
 
+    public static ElementSizing Fit() => FitContent;
+
     public static ElementSizing FitContent => new(SizeSpec.Fit(), SizeSpec.Fit());
 
     public static ElementSizing Grow() => new(SizeSpec.Grow(), SizeSpec.Grow());

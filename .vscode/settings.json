@@ -11,6 +11,8 @@
         "command": true,
         "true": true,
         "dotnet tool": true,
-        "ilspycmd": true
+        "ilspycmd": true,
+        "compare": true,
+        "convert": true
     }
 }
