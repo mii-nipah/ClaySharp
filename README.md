@@ -2,6 +2,15 @@
 
 ClaySharp is an immediate-mode UI layout library for .NET. It builds a layout tree each frame, resolves sizes and positions, then emits a flat span of renderer-agnostic render commands for rectangles, borders, text, images, clipping, overlays, and custom payloads.
 
+<p align="center">
+    <img src="snapshots/demo.png" alt="ClaySharp light theme demo showing clipped panels, counters, and renderer notes" width="49%" />
+    <img src="snapshots/demo_dark.png" alt="ClaySharp dark theme widget gallery showing color swatches, toggles, progress, and typography" width="49%" />
+</p>
+
+<p align="center">
+    <sub>Lightweight layout primitives, renderer-neutral commands, and a Raylib-backed interactive widget layer.</sub>
+</p>
+
 The repository currently ships two packages:
 
 - `ClaySharp`: core layout engine and render command model.
