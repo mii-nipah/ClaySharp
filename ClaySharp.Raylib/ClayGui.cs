@@ -9,6 +9,7 @@ public sealed class ClayGui
 {
     private const float DefaultTransitionDuration = 0.22f;
     private const float DefaultTransitionOffset = 14f;
+    private const float ScrollTranslationTolerance = 1f;
     private const int RetainedStateTtlFrames = 180;
     private const ulong AutomaticIdentityNamespace = 0xC1A94E1D9F42A6B7UL;
     private const ulong HashOffsetBasis = 14695981039346656037UL;
@@ -23,6 +24,7 @@ public sealed class ClayGui
     private readonly Dictionary<ulong, TransitionState> _transitionStates = [];
     private readonly Dictionary<ulong, int> _transitionCommandIndices = [];
     private readonly Dictionary<ulong, ulong> _automaticIdentityCounts = [];
+    private readonly List<float> _verticalScrollTranslations = [];
 
     private Vector2 _viewport;
     private ulong _hoveredElementId;
@@ -59,6 +61,7 @@ public sealed class ClayGui
         _hoveredElementId = _context.TryHitTest(mousePosition, out var elementId) ? elementId : 0UL;
         _leftPressed = RL.IsMouseButtonPressed(MouseButton.Left);
         _mouseWheelMove = RL.GetMouseWheelMoveV();
+        _verticalScrollTranslations.Clear();
 
         CapturePreviousElementMetrics();
         _trackedElementIds.Clear();
@@ -302,6 +305,16 @@ public sealed class ClayGui
         _scrollStates[elementId] = state;
     }
 
+    private void RegisterVerticalScrollTranslation(float translationY)
+    {
+        if (MathF.Abs(translationY) <= 0.001f)
+        {
+            return;
+        }
+
+        _verticalScrollTranslations.Add(translationY);
+    }
+
     private float GetVerticalWheelOffset(float step)
     {
         var wheelDelta = _mouseWheelMove.Y;
@@ -458,6 +471,8 @@ public sealed class ClayGui
             var seenPreviousFrame = state.LastSeenGeneration == (_frameGeneration - 1);
             state.LastSeenGeneration = _frameGeneration;
             state.FrameIsEntering = !seenPreviousFrame && _frameGeneration > 1;
+            state.FrameScrollTranslationResolved = false;
+            state.FrameScrollTranslationY = 0f;
         }
 
         state.IsExiting = false;
@@ -479,8 +494,9 @@ public sealed class ClayGui
         }
         else if (nextIndex < state.Count && CanInterpolate(state.Commands[nextIndex], target))
         {
-            // Normal transition: interpolate everything (bounds, colors, etc.)
-            blended = InterpolateCommand(state.Commands[nextIndex], target, factor);
+            var previous = state.Commands[nextIndex];
+            var scrollTranslationY = ResolveFrameScrollTranslation(state, nextIndex, in previous, in target);
+            blended = InterpolateOngoingCommand(previous, target, factor, scrollTranslationY);
         }
         else
         {
@@ -489,6 +505,39 @@ public sealed class ClayGui
 
         state.Commands[nextIndex] = blended;
         return blended;
+    }
+
+    private float ResolveFrameScrollTranslation(TransitionState state, int commandIndex, in RenderCommand previous, in RenderCommand target)
+    {
+        if (state.FrameScrollTranslationResolved)
+        {
+            return state.FrameScrollTranslationY;
+        }
+
+        state.FrameScrollTranslationResolved = true;
+        if (commandIndex != 0 || _verticalScrollTranslations.Count == 0 || !CommandHasBounds(target.Type))
+        {
+            return 0f;
+        }
+
+        if (!NearlyEqual(previous.Bounds.X, target.Bounds.X))
+        {
+            return 0f;
+        }
+
+        var boundsDeltaY = target.Bounds.Y - previous.Bounds.Y;
+        foreach (var scrollTranslationY in _verticalScrollTranslations)
+        {
+            if (!NearlyEqual(boundsDeltaY, scrollTranslationY, ScrollTranslationTolerance))
+            {
+                continue;
+            }
+
+            state.FrameScrollTranslationY = boundsDeltaY;
+            return state.FrameScrollTranslationY;
+        }
+
+        return 0f;
     }
 
     private float ComputeTransitionFactor(float durationSeconds)
@@ -530,32 +579,29 @@ public sealed class ClayGui
         };
     }
 
-    /// <summary>
-    /// Interpolates only visual properties (colors, alpha) while snapping bounds to the layout target.
-    /// Used for normal frame-to-frame transitions so scroll/hover don't cause laggy position easing.
-    /// </summary>
-    private static RenderCommand InterpolateVisuals(in RenderCommand previous, in RenderCommand target, float factor)
+    internal static RenderCommand InterpolateOngoingCommand(
+        in RenderCommand previous,
+        in RenderCommand target,
+        float factor,
+        float verticalScrollTranslationY)
     {
-        if (factor >= 0.999f)
+        var adjustedPrevious = previous;
+        if (CommandHasBounds(target.Type) && MathF.Abs(verticalScrollTranslationY) > 0.001f)
         {
-            return target;
+            adjustedPrevious.Bounds = Offset(adjustedPrevious.Bounds, 0f, verticalScrollTranslationY);
         }
 
-        return new RenderCommand
-        {
-            Type = target.Type,
-            ElementId = target.ElementId,
-            TransitionId = target.TransitionId,
-            Bounds = target.Bounds,
-            Color = Lerp(previous.Color, target.Color, factor),
-            Thickness = target.Thickness,
-            CornerRadius = target.CornerRadius,
-            Text = target.Text,
-            TextStyle = Lerp(previous.TextStyle, target.TextStyle, factor),
-            SourceRegion = target.SourceRegion,
-            UseSourceRegion = target.UseSourceRegion,
-            Payload = target.Payload,
-        };
+        return InterpolateCommand(in adjustedPrevious, in target, factor);
+    }
+
+    private static bool CommandHasBounds(RenderCommandType type)
+    {
+        return type != RenderCommandType.ScissorEnd && type != RenderCommandType.OverlayEnd;
+    }
+
+    private static RectF Offset(in RectF bounds, float offsetX, float offsetY)
+    {
+        return new RectF(bounds.X + offsetX, bounds.Y + offsetY, bounds.Width, bounds.Height);
     }
 
     private static RenderCommand CreateEnterCommand(in RenderCommand target)
@@ -617,6 +663,11 @@ public sealed class ClayGui
     private static bool NearlyEqual(float left, float right)
     {
         return MathF.Abs(left - right) <= 0.5f;
+    }
+
+    private static bool NearlyEqual(float left, float right, float tolerance)
+    {
+        return MathF.Abs(left - right) <= tolerance;
     }
 
     private void CleanupRetainedState()
@@ -785,6 +836,8 @@ public sealed class ClayGui
         public int LastSeenGeneration;
         public bool IsExiting;
         public bool FrameIsEntering;
+        public bool FrameScrollTranslationResolved;
+        public float FrameScrollTranslationY;
 
         public void EnsureCapacity(int required)
         {
@@ -1144,6 +1197,8 @@ public sealed class ClayGui
                 resolvedMaxOffset = MathF.Min(resolvedMaxOffset, maxOffset.Value);
             }
 
+            var previousOffset = offset;
+
             var wheelOffset = _gui.IsMouseOver(_assignedId)
                 ? _gui.GetVerticalWheelOffset(step)
                 : 0f;
@@ -1153,6 +1208,7 @@ public sealed class ClayGui
             }
 
             offset = Math.Clamp(offset, 0f, resolvedMaxOffset);
+            _gui.RegisterVerticalScrollTranslation(previousOffset - offset);
 
             var scrollOffset = new Vector2(_style.Layout.ScrollOffset.X, offset);
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, scrollOffset: scrollOffset), _style.Box);
@@ -1166,6 +1222,7 @@ public sealed class ClayGui
 
             var state = _gui.GetScrollState(_assignedId);
             var maxOffset = GetMaxScrollOffset();
+            var previousOffset = state.Offset;
 
             _style = new ElementStyle(_style.Id, WithLayout(_style.Layout, clipContent: true), _style.Box);
 
@@ -1184,6 +1241,7 @@ public sealed class ClayGui
                 state.Offset = Math.Clamp(state.Offset, 0f, maxOffset);
             }
 
+            _gui.RegisterVerticalScrollTranslation(previousOffset - state.Offset);
             _gui.SetScrollState(_assignedId, state);
             offset = state.Offset;
 
