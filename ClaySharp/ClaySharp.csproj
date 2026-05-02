@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>ClaySharp</PackageId>
+    <PackageId>Nipah.ClaySharp</PackageId>
     <Title>ClaySharp</Title>
     <Description>A renderer-agnostic immediate-mode UI layout engine for .NET that emits flat render commands.</Description>
     <PackageTags>$(PackageTags);layout-engine;renderer-agnostic</PackageTags>

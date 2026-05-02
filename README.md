@@ -12,11 +12,11 @@ The repository currently ships two packages:
 ## Install
 
 ```sh
-dotnet add package ClaySharp
-dotnet add package ClaySharp.Raylib
+dotnet add package Nipah.ClaySharp
+dotnet add package Nipah.ClaySharp.Raylib
 ```
 
-Install only `ClaySharp` if you want to provide your own renderer and `ITextMeasurer` implementation.
+Install only `Nipah.ClaySharp` if you want to provide your own renderer and `ITextMeasurer` implementation.
 
 ## Core Usage
 

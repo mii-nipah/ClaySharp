@@ -2,8 +2,8 @@
 
 ClaySharp publishes as two NuGet packages with the same version:
 
-- `ClaySharp`
-- `ClaySharp.Raylib`
+- `Nipah.ClaySharp`
+- `Nipah.ClaySharp.Raylib`
 
 The sample runner and test project are marked non-packable.
 
@@ -34,13 +34,13 @@ The workflow refuses to run if the release tag already exists, so a version is p
 If you do not want to use GitHub Actions, publish the generated packages manually:
 
 ```sh
-dotnet nuget push artifacts/packages/ClaySharp.<version>.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-dotnet nuget push artifacts/packages/ClaySharp.Raylib.<version>.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+dotnet nuget push artifacts/packages/Nipah.ClaySharp.<version>.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+dotnet nuget push artifacts/packages/Nipah.ClaySharp.Raylib.<version>.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 ```
 
 Push symbols as well when `.snupkg` files are present:
 
 ```sh
-dotnet nuget push artifacts/packages/ClaySharp.<version>.snupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-dotnet nuget push artifacts/packages/ClaySharp.Raylib.<version>.snupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+dotnet nuget push artifacts/packages/Nipah.ClaySharp.<version>.snupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+dotnet nuget push artifacts/packages/Nipah.ClaySharp.Raylib.<version>.snupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 ```
