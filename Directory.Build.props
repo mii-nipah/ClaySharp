@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>nipah</Authors>
     <Copyright>Copyright (c) 2026 ClaySharp contributors</Copyright>
     <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>

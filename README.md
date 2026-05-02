@@ -1,5 +1,11 @@
 # ClaySharp
 
+- [Install](#install)
+- [Core Usage](#core-usage)
+- [Raylib Usage](#raylib-usage)
+- [Development](#development)
+- [Cool Stuff](#cool-stuff)
+
 ClaySharp is an immediate-mode UI layout library for .NET. It builds a layout tree each frame, resolves sizes and positions, then emits a flat span of renderer-agnostic render commands for rectangles, borders, text, images, clipping, overlays, and custom payloads.
 
 <p align="center">
@@ -114,3 +120,12 @@ dotnet pack ClaySharp.Raylib/ClaySharp.Raylib.csproj -c Release -o artifacts/pac
 ```
 
 Package metadata is centralized in `Directory.Build.props`. Update its `Version` value before publishing a new release.
+
+## Cool Stuff
+* [Clay](https://github.com/nicbarker/clay)
+
+My inspiration to build this library using the techniques he described in his video. I find the idea extremely cool and I was always very amused by immediate mode GUI libraries.
+
+Like, since I started programming 10+ years ago, one of the things I found the most bewildering was the synchrony problem between code and display. I never growed to like retained mode UIs... well kinda, I know why they exist and all, but I'm still not satisfied with them.
+
+So this is really cool, I hope this is useful to someone.
