@@ -14,7 +14,7 @@ Raylib.SetConfigFlags(snapshotMode ? ConfigFlags.HiddenWindow : ConfigFlags.Resi
 Raylib.InitWindow(DefaultWindowWidth, DefaultWindowHeight, "ClaySharp.Run");
 if (!snapshotMode)
 {
-    Raylib.SetTargetFPS(60);
+    Raylib.SetTargetFPS(180);
 }
 
 {
