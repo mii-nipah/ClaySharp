@@ -5,6 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageId>ClaySharp.Raylib</PackageId>
+    <Title>ClaySharp.Raylib</Title>
+    <Description>Raylib-cs text measurement, rendering, font asset, and retained GUI helpers for ClaySharp.</Description>
+    <PackageTags>$(PackageTags);raylib;raylib-cs;renderer</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
