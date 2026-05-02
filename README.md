@@ -6,6 +6,8 @@
 - [Development](#development)
 - [Cool Stuff](#cool-stuff)
 
+---
+
 ClaySharp is an immediate-mode UI layout library for .NET. It builds a layout tree each frame, resolves sizes and positions, then emits a flat span of renderer-agnostic render commands for rectangles, borders, text, images, clipping, overlays, and custom payloads.
 
 <p align="center">

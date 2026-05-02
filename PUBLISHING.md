@@ -25,9 +25,9 @@ dotnet pack ClaySharp.Raylib/ClaySharp.Raylib.csproj -c Release --no-build -o ar
 
 Create a NuGet API key at https://www.nuget.org/account/apikeys and add it to the repository as an Actions secret named `NUGET_API_KEY`.
 
-Then run the `Publish NuGet` workflow manually from GitHub Actions. The workflow reads the version from `Directory.Build.props`, builds, tests, packs both packages, publishes them to NuGet, creates a `v<version>` git tag, and creates a GitHub Release with the package artifacts attached.
+Commit and push the version bump to `main` or `master`. The `Publish NuGet` workflow runs automatically when `Directory.Build.props` changes. It reads the version, builds, tests, packs both packages, publishes them to NuGet, creates a `v<version>` git tag, and creates a GitHub Release with the package artifacts attached.
 
-The workflow refuses to run if the release tag already exists, so a version is published at most once.
+The workflow can also be run manually from GitHub Actions. If the release tag already exists, it exits successfully without publishing, so a version is published at most once.
 
 ## Manual Publish
 
