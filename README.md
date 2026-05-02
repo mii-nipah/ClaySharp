@@ -106,6 +106,24 @@ Raylib.CloseWindow();
 
 Raylib GPU assets such as custom fonts, shaders, and texture-backed font atlases should be disposed before `Raylib.CloseWindow()`.
 
+### SDF Fonts
+
+`ClaySharp.Raylib` ships an SDF font helper so text stays sharp at any scale. Load a TTF after `Raylib.InitWindow(...)` and pass the resulting `RaylibFontFace` into the measurer and renderer:
+
+```csharp
+using var fontAsset = RaylibFontAsset.LoadSdf(
+    "OpenSans-Regular.ttf",
+    baseSize: 48,
+    codepoints: RaylibFontAsset.CreateCodepointRange(32, 255));
+
+using var measurer = new RaylibTextMeasurer(_ => fontAsset.Face);
+using var renderer = new ClayRaylibRenderer(_ => fontAsset.Face);
+```
+
+`LoadSdf` builds the glyph atlas with `FontType.Sdf`, uploads it as a bilinear-filtered texture, and compiles the matching SDF fragment shader. `ClayRaylibRenderer` automatically wraps `DrawTextEx` in `BeginShaderMode` / `EndShaderMode` whenever the resolved `RaylibFontFace` carries a shader, so regular `Font` instances keep working unchanged via `RaylibFontAsset.Wrap(font)` or the existing `Func<int, Font>` overloads.
+
+Dispose `RaylibFontAsset` before `Raylib.CloseWindow()` so the SDF texture and shader are unloaded while the GL context is still alive.
+
 ## Development
 
 ```sh
