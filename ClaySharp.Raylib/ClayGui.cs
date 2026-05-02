@@ -453,15 +453,20 @@ public sealed class ClayGui
             : 0;
         _transitionCommandIndices[target.TransitionId] = nextIndex + 1;
 
-        var seenPreviousFrame = state.LastSeenGeneration == (_frameGeneration - 1);
-        state.LastSeenGeneration = _frameGeneration;
+        if (state.LastSeenGeneration != _frameGeneration)
+        {
+            var seenPreviousFrame = state.LastSeenGeneration == (_frameGeneration - 1);
+            state.LastSeenGeneration = _frameGeneration;
+            state.FrameIsEntering = !seenPreviousFrame && _frameGeneration > 1;
+        }
+
         state.IsExiting = false;
         state.EnsureCapacity(nextIndex + 1);
 
         var factor = ComputeTransitionFactor(state.DurationSeconds);
 
         RenderCommand blended;
-        if (!seenPreviousFrame && _frameGeneration > 1)
+        if (state.FrameIsEntering)
         {
             // Enter transition: interpolate everything (slide + fade in)
             var start = CreateEnterCommand(target);
@@ -474,8 +479,8 @@ public sealed class ClayGui
         }
         else if (nextIndex < state.Count && CanInterpolate(state.Commands[nextIndex], target))
         {
-            // Normal transition: only interpolate colors, snap bounds to layout position
-            blended = InterpolateVisuals(state.Commands[nextIndex], target, factor);
+            // Normal transition: interpolate everything (bounds, colors, etc.)
+            blended = InterpolateCommand(state.Commands[nextIndex], target, factor);
         }
         else
         {
@@ -779,6 +784,7 @@ public sealed class ClayGui
         public float DurationSeconds = DefaultTransitionDuration;
         public int LastSeenGeneration;
         public bool IsExiting;
+        public bool FrameIsEntering;
 
         public void EnsureCapacity(int required)
         {

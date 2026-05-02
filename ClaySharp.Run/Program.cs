@@ -415,7 +415,7 @@ static void DashboardPage(ClayGui clui, DemoState state)
                         ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                         new TextStyle(22f, new ClayColor(244, 240, 231), wrap: false)));
                 clui.Text(
-                    "This build now extracts floating absolute elements into a z-sorted render pass, so stacked overlays paint on top without inheriting parent clipping or scroll offsets.",
+                    "This build extracts floating absolute elements into a z-sorted render pass, so stacked overlays paint on top without inheriting parent clipping or scroll offsets.",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
@@ -425,7 +425,7 @@ static void DashboardPage(ClayGui clui, DemoState state)
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
                 clui.Text(
-                    "Retained ids are now derived automatically from each element's semantic shape plus invocation order, so animated overlays and scroll regions no longer need string keys in normal usage.",
+                    "Retained ids are derived automatically from each element's semantic shape plus invocation order, so basically you don't need manual keys or ids",
                     new TextElementStyle(
                         new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                         new TextStyle(17f, new ClayColor(205, 214, 222), lineHeight: 24f, wrap: true)));
@@ -475,7 +475,7 @@ static void DashboardPage(ClayGui clui, DemoState state)
                     ElementStyle.Leaf(new ElementSizing(SizeSpec.Fit(), SizeSpec.Fit())),
                     new TextStyle(20f, new ClayColor(242, 245, 240), wrap: false)));
             clui.Text(
-                "This panel is mounted conditionally. Its enter and exit motion now comes from the retained transition state instead of manual alpha bookkeeping.",
+                "This panel is mounted conditionally. Its enter and exit motions come from the retained transition state.",
                 new TextElementStyle(
                     new ElementStyle(layout: new LayoutConfig(sizing: new ElementSizing(SizeSpec.Grow(), SizeSpec.Fit()))),
                     new TextStyle(16f, new ClayColor(205, 214, 222), lineHeight: 22f, wrap: true)));
@@ -780,7 +780,7 @@ static void ToggleRow(ClayGui clui, string label, ref bool value)
             if (toggled) value = !value;
 
             using (clui.Element()
-                .Floating(1)
+                .PositionMode(PositionMode.Absolute)
                 .AbsolutePosition(new AbsolutePosition(Alignment.Start, Alignment.Start, knobOffset, 2f))
                 .BackgroundColor(new ClayColor(240, 242, 250))
                 .CornerRadius(10f)
