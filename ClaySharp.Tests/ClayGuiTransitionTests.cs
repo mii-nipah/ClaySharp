@@ -6,6 +6,21 @@ namespace ClaySharp.Tests;
 public sealed class ClayGuiTransitionTests
 {
     [Fact]
+    public void AdvanceScrollOffset_ApproachesTargetWithoutSnapping()
+    {
+        var offset = ClayGui.AdvanceScrollOffset(0f, 100f, 14f, 1f / 60f);
+
+        Assert.InRange(offset, 1f, 99f);
+    }
+
+    [Fact]
+    public void AdvanceScrollOffset_SnapsWhenDampingOrDeltaTimeCannotAnimate()
+    {
+        Assert.Equal(100f, ClayGui.AdvanceScrollOffset(0f, 100f, 0f, 1f / 60f), 2);
+        Assert.Equal(100f, ClayGui.AdvanceScrollOffset(0f, 100f, 14f, 0f), 2);
+    }
+
+    [Fact]
     public void OngoingTransitions_ApplyScrollTranslationBeforeInterpolatingBounds()
     {
         var previous = new RenderCommand

@@ -550,6 +550,18 @@ public sealed class ClayGui
         return 1f - MathF.Exp(-_frameDeltaTime * (5f / durationSeconds));
     }
 
+    internal static float AdvanceScrollOffset(float currentOffset, float targetOffset, float damping, float deltaTime)
+    {
+        if (damping <= 0f || deltaTime <= 0f)
+        {
+            return targetOffset;
+        }
+
+        var factor = 1f - MathF.Exp(-deltaTime * damping);
+        var nextOffset = currentOffset + ((targetOffset - currentOffset) * factor);
+        return MathF.Abs(targetOffset - nextOffset) <= 0.01f ? targetOffset : nextOffset;
+    }
+
     private static bool CanInterpolate(in RenderCommand previous, in RenderCommand target)
     {
         return previous.Type == target.Type;
@@ -855,6 +867,7 @@ public sealed class ClayGui
     private struct ScrollState
     {
         public float Offset;
+        public float TargetOffset;
         public int LastSeenGeneration;
     }
 
@@ -1230,15 +1243,18 @@ public sealed class ClayGui
                 ? _gui.GetVerticalWheelOffset(step)
                 : 0f;
 
-            state.Offset += wheelOffset;
+            state.TargetOffset += wheelOffset;
 
             if (maxOffset <= 0f)
             {
                 state.Offset = 0f;
+                state.TargetOffset = 0f;
             }
             else
             {
+                state.TargetOffset = Math.Clamp(state.TargetOffset, 0f, maxOffset);
                 state.Offset = Math.Clamp(state.Offset, 0f, maxOffset);
+                state.Offset = Math.Clamp(AdvanceScrollOffset(state.Offset, state.TargetOffset, damping, _gui._frameDeltaTime), 0f, maxOffset);
             }
 
             _gui.RegisterVerticalScrollTranslation(previousOffset - state.Offset);
